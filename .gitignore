@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Frontend
+node_modules/
+dist/
+build/
+.env.local
+
+# Data
+data/raw/
+data/standardized/
+data/roboflow/
+*.zip
+
+# Models and training outputs
+models/**/*.pt
+models/**/*.onnx
+models/**/*.engine
+runs/
+
+# OS/editor
+.DS_Store
+.vscode/
