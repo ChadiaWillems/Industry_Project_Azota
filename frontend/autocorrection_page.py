@@ -25,7 +25,6 @@ def ResultsView(on_edit_click, on_back_click):
 
     top_bar = ft.Container(
         width=393, height=70, bgcolor=s.COLOR_CARD_WHITE,
-        shadow=ft.BoxShadow(spread_radius=0, blur_radius=10, color="#0A000000"),
         content=ft.Row([
             ft.Container(width=15),
             
@@ -102,14 +101,13 @@ def ResultsView(on_edit_click, on_back_click):
             
             
             ft.GestureDetector(
-                on_tap=lambda e: print("Save button clicked"),
+                on_tap=on_back_click,
                 content=ft.Container(
                     width=145, 
                     height=45, 
                     bgcolor=s.COLOR_PRIMARY,
                     border_radius=22, 
                     alignment=ft.Alignment(0, 0),
-                    shadow=ft.BoxShadow(spread_radius=1, blur_radius=8, color="#302361AE"),
                     content=ft.Text(
                         "Save Image", 
                         color="white",

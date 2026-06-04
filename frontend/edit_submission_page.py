@@ -46,7 +46,6 @@ def EditSubmissionView(on_back_click):
 
     top_bar = ft.Container(
             width=393, height=70, bgcolor=s.COLOR_CARD_WHITE,
-            shadow=ft.BoxShadow(spread_radius=0, blur_radius=10, color="#0A000000"),
             content=ft.Row([
                 ft.Container(width=15),
                 
@@ -184,7 +183,6 @@ def EditSubmissionView(on_back_click):
                     bgcolor=s.COLOR_PRIMARY,
                     border_radius=24,
                     alignment=ft.Alignment(0, 0),
-                    shadow=ft.BoxShadow(spread_radius=1, blur_radius=8, color="#302361AE"),
                     content=ft.Text(
                         "Save Changes", 
                         color="white",
