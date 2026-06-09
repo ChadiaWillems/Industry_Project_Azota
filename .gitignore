@@ -10,11 +10,11 @@ dist/
 build/
 .env.local
 
-# Data
-data/raw/
+# Data — generated or large, not tracked
+data/input/
 data/standardized/
+data/raw/
 data/roboflow/
-data/evaluation/
 data/unseen_raw/
 data/unseen_standardized/
 *.zip
