@@ -57,13 +57,36 @@ def resize_for_processing(image, max_width=1600):
     return resized, scale
 
 
-def is_valid_page_quad(pts, image_shape, min_area_ratio=0.30):
+def quad_rectangularity(pts):
+    """
+    Return the maximum interior-angle deviation from 90° across all 4 corners.
+    A perfect rectangle scores 0. A badly skewed quad scores high (up to ~90).
+    """
+    pts = order_points(pts.reshape(4, 2))
+    max_err = 0.0
+    for i in range(4):
+        p_prev = pts[(i - 1) % 4]
+        p_curr = pts[i]
+        p_next = pts[(i + 1) % 4]
+        v1 = p_prev - p_curr
+        v2 = p_next - p_curr
+        norm = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if norm < 1e-6:
+            return 90.0
+        cos_a = np.clip(np.dot(v1, v2) / norm, -1.0, 1.0)
+        angle = np.degrees(np.arccos(cos_a))
+        max_err = max(max_err, abs(angle - 90.0))
+    return max_err
+
+
+def is_valid_page_quad(pts, image_shape, min_area_ratio=0.30, max_angle_err=30.0):
     """
     Check whether 4 points form a plausible full-page quadrilateral.
     Returns (valid: bool, score: float).
+    Rejects quads where any interior angle deviates from 90° by more than max_angle_err.
     """
     ih, iw = image_shape[:2]
-    pts = pts.reshape(4, 2).astype(np.float32)
+    pts = order_points(pts.reshape(4, 2))   # ensure non-self-intersecting winding
     area = cv2.contourArea(pts)
     ratio = area / (iw * ih)
     if ratio < min_area_ratio:
@@ -76,7 +99,10 @@ def is_valid_page_quad(pts, image_shape, min_area_ratio=0.30):
     err = min(abs(ar - a4), abs(ar - 1 / a4))
     if err > 0.55:
         return False, 0.0
-    return True, ratio - err * 0.5
+    angle_err = quad_rectangularity(pts)
+    if angle_err > max_angle_err:
+        return False, 0.0
+    return True, ratio - err * 0.5 - angle_err * 0.01
 
 
 # ── Detection method 1: registration markers ──────────────────────────────────
@@ -95,11 +121,13 @@ def find_page_by_markers(image):
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     h, w = resized.shape[:2]
 
-    # Markers are near-black even in bright photos
-    _, dark = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY_INV)
+    # Threshold at 80 (not 60) so JPEG-compressed markers are fully captured.
+    # JPEG compression makes solid black squares appear as gray blobs at the edges,
+    # so a stricter threshold (60) under-counts their area after morphological open.
+    _, dark = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
 
-    # Remove fine noise (thin lines, small dots from printed text)
-    k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    # Use a 2x2 kernel — 3x3 erodes small markers (20–30px wide) too aggressively.
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, k)
 
     contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -109,8 +137,9 @@ def find_page_by_markers(image):
     candidates = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # At 1600px wide, markers are roughly 20–120px wide → area 400–15000
-        if area < 400 or area > 15000:
+        # Markers can be as small as 15x15px (area 225) on compressed phone images.
+        # Upper bound stays generous to handle larger markers on high-res scans.
+        if area < 150 or area > 20000:
             continue
         bx, by, bw, bh = cv2.boundingRect(cnt)
         if bh == 0:
@@ -124,12 +153,13 @@ def find_page_by_markers(image):
     if len(candidates) < 4:
         return None, f"markers_only_{len(candidates)}_found"
 
-    # Pick the best marker in each image quadrant, nearest to the outer corner
+    # Pick the best marker in each image quadrant, nearest to the outer corner.
+    # Order: TL → TR → BR → BL (clockwise) so the polygon is non-self-intersecting.
     quadrants = [
         (0,   0,   w/2, h/2, 0, 0),    # TL
         (w/2, 0,   w,   h/2, w, 0),    # TR
-        (0,   h/2, w/2, h,   0, h),    # BL
         (w/2, h/2, w,   h,   w, h),    # BR
+        (0,   h/2, w/2, h,   0, h),    # BL
     ]
 
     corners = []
@@ -139,6 +169,16 @@ def find_page_by_markers(image):
             return None, "markers_missing_corner"
         best = min(in_q, key=lambda p: (p[0] - rx) ** 2 + (p[1] - ry) ** 2)
         corners.append(best)
+
+    # Expand slightly outward so the page content beyond the markers is included.
+    # Markers are typically 5–10 mm inside the page edge; 4% of image size covers that.
+    cx_page = sum(c[0] for c in corners) / 4
+    cy_page = sum(c[1] for c in corners) / 4
+    margin = 0.04
+    corners = [
+        (cx + (cx - cx_page) * margin, cy + (cy - cy_page) * margin)
+        for cx, cy in corners
+    ]
 
     pts = (np.array(corners, dtype=np.float32) / scale).reshape(4, 1, 2)
     valid, _ = is_valid_page_quad(pts, image.shape, min_area_ratio=0.25)
