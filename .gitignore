@@ -14,10 +14,13 @@ build/
 data/raw/
 data/standardized/
 data/roboflow/
+data/evaluation/
+data/unseen_raw/
+data/unseen_standardized/
 *.zip
 
 # Models and training outputs
-models/**/*.pt
+*.pt
 models/**/*.onnx
 models/**/*.engine
 runs/
