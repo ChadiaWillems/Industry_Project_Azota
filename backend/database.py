@@ -9,10 +9,8 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Enable Foreign Key support in SQLite (disabled by default)
     cursor.execute("PRAGMA foreign_keys = ON;")
     
-    # 1. Parent Table: SCANS
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS scans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +24,6 @@ def init_db():
         )
     """)
     
-    # 2. Child Table: DETECTED_ANSWERS (Without correct_solution, matching the Excel logic)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS detected_answers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,6 +98,18 @@ def get_scan_answers(scan_id):
         {"Question": r[0], "AI Detected": r[1], "Corrected Input": r[2], "Is Correct": bool(r[3])}
         for r in rows
     ]
+
+def insert_exam_file(exam_name, subject, file_path):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO exam_files (name, subject, file_path)
+        VALUES (?, ?, ?)
+    """, (exam_name, subject, file_path))
+
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
     init_db()
