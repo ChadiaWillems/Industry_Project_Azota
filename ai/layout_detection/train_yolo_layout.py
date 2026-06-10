@@ -3,13 +3,20 @@
 """
 Train a YOLO object detection model for Azota exam layout detection.
 
-Example from PowerShell, from the project root:
+Quick test (5 epochs):
+python ai/layout_detection/train_yolo_layout.py \
+  --data data/roboflow/azota-layout-v2/data.yaml \
+  --model yolov8l.pt --imgsz 1024 --epochs 5 --batch 2 --device 0 \
+  --name test_run_5_epochs
 
-python ai/layout_detection/train_yolo_layout.py --data data/roboflow/azota-layout-v1/data.yaml --model yolov8s.pt --imgsz 1024 --epochs 5 --batch 4 --device 0 --name test_run_5_epochs
+YOLOv8l full training (recommended):
+python ai/layout_detection/train_yolo_layout.py \
+  --data data/roboflow/azota-layout-v2/data.yaml \
+  --model yolov8l.pt --imgsz 1024 --epochs 150 --batch 2 --device 0 \
+  --patience 30 --cache disk --cos-lr \
+  --name yolov8l_layout_v2
 
-Real training example:
-
-python ai/layout_detection/train_yolo_layout.py --data data/roboflow/azota-layout-v1/data.yaml --model yolov8s.pt --imgsz 1024 --epochs 200 --batch 4 --device 0 --name yolov8s_layout_v1
+If CUDA OOM: drop --batch to 1, or --imgsz to 896.
 """
 
 from pathlib import Path
@@ -95,6 +102,33 @@ def parse_args():
         help="Number of dataloader workers.",
     )
 
+    parser.add_argument(
+        "--cache",
+        type=str,
+        default="disk",
+        choices=["ram", "disk", "false"],
+        help=(
+            "Cache preprocessed images to speed up training. "
+            "'disk' saves to disk (safe for large datasets), "
+            "'ram' loads all into GPU/CPU memory (fastest but needs lots of RAM), "
+            "'false' disables caching."
+        ),
+    )
+
+    parser.add_argument(
+        "--cos-lr",
+        action="store_true",
+        default=True,
+        help="Use cosine learning rate schedule. Improves convergence on longer runs.",
+    )
+
+    parser.add_argument(
+        "--no-cos-lr",
+        action="store_false",
+        dest="cos_lr",
+        help="Disable cosine learning rate schedule.",
+    )
+
     return parser.parse_args()
 
 
@@ -111,6 +145,8 @@ def print_training_summary(args):
     print(f"Device:       {args.device}")
     print(f"Output:       {args.project}/{args.name}")
     print(f"Patience:     {args.patience}")
+    print(f"Cache:        {args.cache}")
+    print(f"Cosine LR:    {args.cos_lr}")
     print("=" * 60)
     print()
 
@@ -146,6 +182,8 @@ def validate_paths(args):
 def train_model(args):
     model = YOLO(args.model)
 
+    cache_value = False if args.cache == "false" else args.cache
+
     results = model.train(
         data=args.data,
         imgsz=args.imgsz,
@@ -157,7 +195,8 @@ def train_model(args):
         patience=args.patience,
         workers=args.workers,
         plots=True,
-        cache=False,
+        cache=cache_value,
+        cos_lr=args.cos_lr,
     )
 
     return results
@@ -199,13 +238,14 @@ def main():
 
         print()
         print("Next step: run prediction on test images, for example:")
+        data_dir = str(Path(args.data).parent)
         print(
             f"python ai/layout_detection/predict_yolo_layout.py "
             f"--weights {best_weights} "
-            f"--source data/roboflow/azota-layout-v1/test/images "
+            f"--source {data_dir}/test/images "
             f"--conf 0.25 "
             f"--imgsz {args.imgsz} "
-            f"--name test_predictions_v1"
+            f"--name {args.name}_predictions"
         )
 
     except RuntimeError as error:

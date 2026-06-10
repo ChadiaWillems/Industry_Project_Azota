@@ -25,6 +25,13 @@ models/**/*.onnx
 models/**/*.engine
 runs/
 
+# YOLO auto-downloaded datasets and label caches
+datasets/
+*.cache
+
+# SQLite databases (runtime data, not source)
+*.db
+
 # OS/editor
 .DS_Store
 .vscode/
