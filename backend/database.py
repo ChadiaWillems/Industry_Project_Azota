@@ -38,6 +38,16 @@ def init_db():
             FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE
         )
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS exam_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+""")
     
     conn.commit()
     conn.close()
