@@ -83,7 +83,13 @@ def show_camera_page(current_dir, encoded_logo_full):
             with open(saved_path, "wb") as f:
                 f.write(excel_file.getbuffer())
 
-            db.insert_exam_file(exam_name, subject, saved_path)
+            file_bytes = excel_file.getvalue()
+
+            db.insert_exam_file(
+                exam_name,
+                subject,
+                file_bytes
+            )
 
             # RESET STATE (belangrijk)
             st.session_state.excel_path = None

@@ -37,14 +37,14 @@ def init_db():
     """)
 
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS exam_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-""")
+        CREATE TABLE IF NOT EXISTS exam_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            file_blob BLOB,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     
     conn.commit()
     conn.close()
@@ -99,17 +99,32 @@ def get_scan_answers(scan_id):
         for r in rows
     ]
 
-def insert_exam_file(exam_name, subject, file_path):
+def insert_exam_file(exam_name, subject, file_bytes):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT INTO exam_files (name, subject, file_path)
+        INSERT INTO exam_files (name, subject, file_blob)
         VALUES (?, ?, ?)
-    """, (exam_name, subject, file_path))
+    """, (exam_name, subject, file_bytes))
 
     conn.commit()
     conn.close()
+
+def get_exam_file(file_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT name, subject, file_blob
+        FROM exam_files
+        WHERE id = ?
+    """, (file_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row
 
 if __name__ == "__main__":
     init_db()
