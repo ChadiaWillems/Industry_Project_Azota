@@ -48,7 +48,7 @@ def init_db():
     
     conn.commit()
     conn.close()
-    print(f"✨ Success: Database '{DB_NAME}' and tables initialized perfectly!")
+    # print(f"✨ Success: Database '{DB_NAME}' and tables initialized perfectly!")
 
 # =====================================================================
 # BACKEND & FRONTEND HELPER FUNCTIES
