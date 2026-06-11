@@ -19,6 +19,18 @@ data/unseen_raw/
 data/unseen_standardized/
 *.zip
 
+# Filled test images — keep folder structure (.gitkeep) but not the images
+data/test_filled/raw/*
+data/test_filled/readable/*
+data/test_filled/binary/*
+data/test_filled/corrected/*
+data/test_filled/debug/*
+!data/test_filled/raw/.gitkeep
+!data/test_filled/readable/.gitkeep
+!data/test_filled/binary/.gitkeep
+!data/test_filled/corrected/.gitkeep
+!data/test_filled/debug/.gitkeep
+
 # Models and training outputs
 *.pt
 models/**/*.onnx

@@ -121,10 +121,10 @@ def find_page_by_markers(image):
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     h, w = resized.shape[:2]
 
-    # Threshold at 80 (not 60) so JPEG-compressed markers are fully captured.
-    # JPEG compression makes solid black squares appear as gray blobs at the edges,
-    # so a stricter threshold (60) under-counts their area after morphological open.
-    _, dark = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
+    # Threshold at 120: captures markers that appear dark gray in photos taken
+    # under bright or uneven lighting (where solid black squares scan as ~100-120).
+    # This is safe because pencil-filled bubbles are ~140-180 gray and still excluded.
+    _, dark = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
 
     # Use a 2x2 kernel — 3x3 erodes small markers (20–30px wide) too aggressively.
     k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
@@ -137,9 +137,9 @@ def find_page_by_markers(image):
     candidates = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        # Markers can be as small as 15x15px (area 225) on compressed phone images.
-        # Upper bound stays generous to handle larger markers on high-res scans.
-        if area < 150 or area > 20000:
+        # Markers can be as small as 15x15px on compressed images, or as large
+        # as ~245x245px when the sheet fills the frame in a close-up phone shot.
+        if area < 150 or area > 60000:
             continue
         bx, by, bw, bh = cv2.boundingRect(cnt)
         if bh == 0:
@@ -169,6 +169,21 @@ def find_page_by_markers(image):
             return None, "markers_missing_corner"
         best = min(in_q, key=lambda p: (p[0] - rx) ** 2 + (p[1] - ry) ** 2)
         corners.append(best)
+
+    # Validate that opposite edges are consistent length.  A real sheet is
+    # rectangular, so top ≈ bottom and left ≈ right (within 20%).  When an
+    # internal section-divider square is mistakenly chosen as a corner (because
+    # the real corner marker is at the image edge and partially filtered), one
+    # pair of opposite edges becomes significantly shorter than the other.
+    tl, tr, br, bl = [np.array(c) for c in corners]  # order: TL TR BR BL
+    top_w   = float(np.linalg.norm(tr - tl))
+    bot_w   = float(np.linalg.norm(br - bl))
+    left_h  = float(np.linalg.norm(bl - tl))
+    right_h = float(np.linalg.norm(br - tr))
+    if top_w > 0 and bot_w > 0 and abs(top_w / bot_w - 1) > 0.20:
+        return None, "markers_skewed_edges"
+    if left_h > 0 and right_h > 0 and abs(left_h / right_h - 1) > 0.20:
+        return None, "markers_skewed_edges"
 
     # Expand slightly outward so the page content beyond the markers is included.
     # Markers are typically 5–10 mm inside the page edge; 4% of image size covers that.
@@ -399,6 +414,31 @@ def standardize_single_image(image_path, output_dirs, skip_existing=False):
     if contour is not None:
         corrected = perspective_correct(image, contour)
         corrected = fill_warp_artifacts(corrected)
+        # Sanity check: if the warped image is almost pure white with very low
+        # variance, the contour was wrong (e.g. markers from two sheets in frame,
+        # or background warped instead of page). A correctly warped page — even a
+        # mostly blank scanner sheet — always has printed content (text, bubble
+        # circles, borders) giving std > ~10. Pure blank space has std < 5.
+        gray_check = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
+        if gray_check.mean() > 235 and float(gray_check.std()) < 10:
+            for fn, fallback_name in [
+                (find_page_by_markers,   "markers"),
+                (find_page_by_paper_mask, "paper_mask"),
+                (find_page_by_edges,     "edges"),
+            ]:
+                if fallback_name == method:
+                    continue
+                contour2, method2 = fn(image)
+                if contour2 is None:
+                    continue
+                corrected2 = perspective_correct(image, contour2)
+                corrected2 = fill_warp_artifacts(corrected2)
+                check2 = cv2.cvtColor(corrected2, cv2.COLOR_BGR2GRAY).mean()
+                if check2 < gray_check.mean():
+                    corrected, contour, method = corrected2, contour2, method2
+                    gray_check = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
+                if gray_check.mean() < 235:
+                    break
     else:
         corrected = fallback_resize(image)
 
