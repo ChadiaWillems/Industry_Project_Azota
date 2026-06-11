@@ -27,9 +27,12 @@ def show_preview_page(logo_html, COLOR_SECONDARY):
     </div>
     """, unsafe_allow_html=True)
 
-    saved_path = st.session_state.get("temp_raw_path", "")
-    if os.path.exists(saved_path):
-        st.image(saved_path, use_container_width=True)
+    display_path = st.session_state.get("standardized_image_path") or st.session_state.get("temp_raw_path", "")
+    if os.path.exists(display_path):
+        st.image(display_path, use_container_width=True)
+        method = st.session_state.get("standardization_method", "")
+        if method and method not in ("error", "unavailable"):
+            st.caption(f"Standardized · method: {method}")
 
     st.write("")
     
@@ -41,30 +44,8 @@ def show_preview_page(logo_html, COLOR_SECONDARY):
             
     with col2:
         if st.button("Submit", key="submit_btn"):
-            with st.spinner("AI is grading the sheet..."):
-                # [MOCK DATA VOOR FRONTEND TESTING]
-                mock_answers = [
-                    {"question": 1, "ai": "A", "is_correct": 1},
-                    {"question": 2, "ai": "B", "is_correct": 0},
-                    {"question": 3, "ai": "C", "is_correct": 1},
-                    {"question": 4, "ai": "A", "is_correct": 1},
-                    {"question": 5, "ai": "D", "is_correct": 0}
-                ]
-                
-                # 🚫 TIJDELIJK BEVROREN: We slaan nog even niets op in SQLite
-                # scan_id = db.insert_new_scan(
-                #     score_earned=initial_score,
-                #     score_total=len(mock_answers),
-                #     img_raw=saved_path,
-                #     img_standardized=saved_path,
-                #     img_sections=saved_path,
-                #     img_graded=saved_path,
-                #     answers_list=mock_answers
-                # )
-                
-                # 🎯 DIRECT DOOR NAAR DE RESULTATEN MET EEN TEST-ID
-                st.session_state.current_scan_id = 1  # Fake ID voor de frontend
-                st.session_state.screen = "results"
-                st.rerun()
+            st.session_state.current_scan_id = 1
+            st.session_state.screen = "results"
+            st.rerun()
             
     st.markdown('</div>', unsafe_allow_html=True)

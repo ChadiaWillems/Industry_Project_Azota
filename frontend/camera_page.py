@@ -1,7 +1,19 @@
 import streamlit as st
 import os
+import sys
+from pathlib import Path
 from PIL import Image, ImageOps
 from backend import database as db
+
+_project_root = Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+try:
+    from ai.standardization.standardize_dataset import standardize_single_image, create_output_dirs
+    _STANDARDIZATION_AVAILABLE = True
+except ImportError:
+    _STANDARDIZATION_AVAILABLE = False
 
 def show_camera_page(current_dir, encoded_logo_full):
     if encoded_logo_full:
@@ -44,6 +56,28 @@ def show_camera_page(current_dir, encoded_logo_full):
                 fixed_image.save(saved_path)
 
                 st.session_state.temp_raw_path = saved_path
+
+                with st.spinner("Standardizing image..."):
+                    if _STANDARDIZATION_AVAILABLE:
+                        try:
+                            std_out = _project_root / "frontend" / "img" / "standardized_output"
+                            output_dirs = create_output_dirs(str(std_out))
+                            method = standardize_single_image(Path(saved_path), output_dirs)
+                            corrected_path = str(output_dirs["corrected"] / f"{Path(saved_path).stem}_corrected.png")
+                            if os.path.exists(corrected_path):
+                                st.session_state.standardized_image_path = corrected_path
+                                st.session_state.standardization_method = method
+                            else:
+                                st.session_state.standardized_image_path = saved_path
+                                st.session_state.standardization_method = "error"
+                        except Exception as e:
+                            st.warning(f"Standardization failed: {e}")
+                            st.session_state.standardized_image_path = saved_path
+                            st.session_state.standardization_method = "error"
+                    else:
+                        st.session_state.standardized_image_path = saved_path
+                        st.session_state.standardization_method = "unavailable"
+
                 st.session_state.screen = "preview"
                 st.rerun()
 

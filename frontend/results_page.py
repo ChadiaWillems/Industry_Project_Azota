@@ -95,10 +95,15 @@ def show_results_page(logo_html, local_img_path):
     st.markdown('<p class="info-text-screenshot">🛈 This is the autocorrected and auto-graded version.</p>', unsafe_allow_html=True)
     
     # --- 5. IMAGE CANVAS ---
-    if os.path.exists(local_img_path):
-        st.image(local_img_path, use_container_width=True)
+    display_path = st.session_state.get("standardized_image_path", "")
+    if not display_path or not os.path.exists(display_path):
+        display_path = local_img_path
+    if os.path.exists(display_path):
+        st.image(display_path, use_container_width=True)
+        method = st.session_state.get("standardization_method", "")
+        if method and method not in ("error", "unavailable"):
+            st.caption(f"Standardized · method: {method}")
     else:
-        # Fallback naar de upload als de mock_img er onverhoopt niet staat
         real_photo_path = st.session_state.get("temp_raw_path", "")
         if real_photo_path and os.path.exists(real_photo_path):
             st.image(real_photo_path, use_container_width=True)
