@@ -133,6 +133,15 @@ def process_image(
                 vis = draw_bubble_grid(crop, grid)
                 debug_name = f"{image_path.stem}_{section_type}_{idx}.png"
                 cv2.imwrite(str(debug_dir / debug_name), vis)
+                binary_name = f"{image_path.stem}_{section_type}_{idx}_binary.png"
+                from bubble_reader import _binarize
+                if crop.ndim == 3 and crop.shape[2] == 3:
+                    gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                elif crop.ndim == 3:
+                    gray_crop = crop[:, :, 0]
+                else:
+                    gray_crop = crop
+                cv2.imwrite(str(debug_dir / binary_name), _binarize(gray_crop))
 
         sheet_result["sections"][section_type] = section_readings
 

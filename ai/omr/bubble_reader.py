@@ -51,9 +51,9 @@ class BubbleGrid:
         return result
 
 
-def _binarize(gray: np.ndarray) -> np.ndarray:
+def _binarize(gray: np.ndarray, debug_path: str | None = None) -> np.ndarray:
     """Convert grayscale to binary with dark regions white (inverted for contour finding)."""
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
     # blockSize must be odd; scale to crop size so small crops use smaller blocks.
     h, w = gray.shape[:2]
     block = max(11, (min(h, w) // 15) | 1)
@@ -62,8 +62,15 @@ def _binarize(gray: np.ndarray) -> np.ndarray:
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
         blockSize=block,
-        C=4,
+        C=2,
     )
+    # Close small gaps in circle outlines so fragmented arcs merge into
+    # complete rings. Thin printed circles get broken into arc segments by
+    # thresholding; closing reconnects them so contour detection works.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    if debug_path is not None:
+        cv2.imwrite(debug_path, binary)
     return binary
 
 
@@ -72,7 +79,8 @@ def detect_bubble_grid(
     min_radius: int = 4,
     max_radius: int = 22,
     fill_threshold: float = 0.35,
-    circularity_min: float = 0.45,
+    circularity_min: float = 0.35,  # kept for API compatibility, not used by Hough
+    _debug_binary_path: str | None = None,
 ) -> BubbleGrid:
     """
     Detect bubbles in a cropped region and return them as a 2D grid.
@@ -82,13 +90,11 @@ def detect_bubble_grid(
         min_radius: Minimum bubble radius in pixels.
         max_radius: Maximum bubble radius in pixels.
         fill_threshold: Dark-pixel fraction above which a bubble is considered filled.
-        circularity_min: Minimum circularity score (0–1) to accept a contour as a bubble.
 
     Returns:
         BubbleGrid with rows sorted top-to-bottom and columns left-to-right.
     """
     # Normalise to 2D grayscale regardless of input shape.
-    # cv2.IMREAD_GRAYSCALE gives (h,w); some pipelines produce (h,w,1) or (h,w,3).
     if crop.ndim == 3:
         if crop.shape[2] == 1:
             gray = crop[:, :, 0]
@@ -97,31 +103,36 @@ def detect_bubble_grid(
     else:
         gray = crop.copy()
 
-    binary = _binarize(gray)
+    # Save binary debug image if requested.
+    if _debug_binary_path is not None:
+        _binarize(gray, debug_path=_debug_binary_path)
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Adapt sensitivity to image quality: darker paper (photocopies, phone photos)
+    # needs a lower accumulator threshold so faint circle outlines are still found.
+    # Formula: param2 ≈ paper_brightness * 0.10, clamped [12, 25].
+    # bright scans (paper ~230): param2 ≈ 23  — confident, few false positives
+    # phone photos (paper ~200): param2 ≈ 20
+    # grey photocopy (paper ~150): param2 ≈ 15
+    paper_brightness = float(np.percentile(gray, 90))
+    param2 = int(np.clip(paper_brightness * 0.10, 12, 25))
+
+    hough = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=max(int(min_radius * 2), 8),
+        param1=50,
+        param2=param2,
+        minRadius=min_radius,
+        maxRadius=max_radius,
+    )
 
     candidates: list[tuple[float, float, float]] = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < np.pi * min_radius ** 2 * 0.35:
-            continue
-        if area > np.pi * max_radius ** 2 * 1.8:
-            continue
-
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter < 1:
-            continue
-
-        circularity = (4 * np.pi * area) / (perimeter ** 2)
-        if circularity < circularity_min:
-            continue
-
-        (cx, cy), radius = cv2.minEnclosingCircle(contour)
-        if not (min_radius <= radius <= max_radius):
-            continue
-
-        candidates.append((float(cx), float(cy), float(radius)))
+    if hough is not None:
+        for cx, cy, r in hough[0]:
+            candidates.append((float(cx), float(cy), float(r)))
 
     if not candidates:
         return BubbleGrid(bubbles=[])
