@@ -38,7 +38,7 @@ def crop_region(image: np.ndarray, detection: Detection, padding: int = 4) -> np
 def crop_graded_regions(
     image: np.ndarray,
     detections: list[Detection],
-    padding: int = 0,
+    padding: int = 6,
 ) -> dict[str, list[RegionCrop]]:
     """
     Crop all gradable regions from a sheet image, grouped by section type.

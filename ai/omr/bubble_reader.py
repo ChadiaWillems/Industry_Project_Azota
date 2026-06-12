@@ -35,7 +35,8 @@ class BubbleGrid:
 
     @property
     def n_cols(self) -> int:
-        return max((len(row) for row in self.bubbles), default=0)
+        all_cols = {b.col for row in self.bubbles for b in row}
+        return max(all_cols, default=-1) + 1
 
     def filled_in_row(self, row_idx: int) -> list[int]:
         if row_idx >= len(self.bubbles):
@@ -183,20 +184,37 @@ def detect_bubble_grid(
             current_row.append(b)
     rows_raw.append(current_row)
 
+    # Cluster all detected X positions into global column groups so that col
+    # indices are consistent across rows even when circles are missing in some
+    # rows (e.g. the row-label column is undetected in the top rows of a numeric
+    # section). Without this, a row missing its leftmost circle has all remaining
+    # circles shifted down by one col index, making column-based reading unreliable.
+    all_xs = sorted({cx for row in rows_raw for cx, *_ in row})
+    x_groups: list[list[float]] = [[all_xs[0]]]
+    for x in all_xs[1:]:
+        if x - float(np.mean(x_groups[-1])) > row_gap:
+            x_groups.append([x])
+        else:
+            x_groups[-1].append(x)
+    col_centers = [float(np.mean(g)) for g in x_groups]
+
+    def _assign_col(cx: float) -> int:
+        return min(range(len(col_centers)), key=lambda i: abs(cx - col_centers[i]))
+
     grid: list[list[Bubble]] = []
     for row_idx, row in enumerate(rows_raw):
         row_sorted = sorted(row, key=lambda b: b[0])
         grid.append([
             Bubble(
                 row=row_idx,
-                col=col_idx,
+                col=_assign_col(cx),
                 center_x=cx,
                 center_y=cy,
                 radius=radius,
                 fill_ratio=fill_ratio,
                 filled=filled,
             )
-            for col_idx, (cx, cy, radius, fill_ratio, filled) in enumerate(row_sorted)
+            for (cx, cy, radius, fill_ratio, filled) in row_sorted
         ])
 
     return BubbleGrid(bubbles=grid)
