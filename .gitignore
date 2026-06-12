@@ -10,6 +10,10 @@ dist/
 build/
 .env.local
 
+# Frontend runtime — uploaded images and standardization outputs
+frontend/img/captured_submission.png
+frontend/img/standardized_output/
+
 # Data — generated or large, not tracked
 data/input/
 data/standardized/

@@ -83,7 +83,8 @@ def is_valid_page_quad(pts, image_shape, min_area_ratio=0.30, max_angle_err=30.0
     """
     Check whether 4 points form a plausible full-page quadrilateral.
     Returns (valid: bool, score: float).
-    Rejects quads where any interior angle deviates from 90° by more than max_angle_err.
+    Rejects quads where any interior angle deviates from 90° by more than max_angle_err,
+    or where opposite edges differ by more than 1.8x (extreme perspective / wrong contour).
     """
     ih, iw = image_shape[:2]
     pts = order_points(pts.reshape(4, 2))   # ensure non-self-intersecting winding
@@ -101,6 +102,19 @@ def is_valid_page_quad(pts, image_shape, min_area_ratio=0.30, max_angle_err=30.0
         return False, 0.0
     angle_err = quad_rectangularity(pts)
     if angle_err > max_angle_err:
+        return False, 0.0
+    # Reject quads where opposite edges differ by more than 1.8x.
+    # A valid perspective shot from a reasonable angle has top/bottom and
+    # left/right edges within ~1.5x of each other.  Larger ratios indicate
+    # a wrong contour (e.g. desk included, or one corner at the image edge).
+    tl, tr, br, bl = pts[0], pts[1], pts[2], pts[3]
+    top_w   = float(np.linalg.norm(tr - tl))
+    bot_w   = float(np.linalg.norm(br - bl))
+    left_h  = float(np.linalg.norm(bl - tl))
+    right_h = float(np.linalg.norm(br - tr))
+    if top_w > 0 and bot_w > 0 and max(top_w / bot_w, bot_w / top_w) > 1.8:
+        return False, 0.0
+    if left_h > 0 and right_h > 0 and max(left_h / right_h, right_h / left_h) > 1.8:
         return False, 0.0
     return True, ratio - err * 0.5 - angle_err * 0.01
 
@@ -153,29 +167,30 @@ def find_page_by_markers(image):
     if len(candidates) < 4:
         return None, f"markers_only_{len(candidates)}_found"
 
-    # Pick the best marker in each image quadrant, nearest to the outer corner.
+    # Pick the registration marker in the outer 25% zone near each corner.
+    # Corner registration markers are always very close to the sheet edge.
+    # Internal section-separator squares (same dark-square appearance) live
+    # in the interior (30–70% of the image) and must not be selected.
+    # If any corner zone has no candidate, fall through to the next method.
     # Order: TL → TR → BR → BL (clockwise) so the polygon is non-self-intersecting.
-    quadrants = [
-        (0,   0,   w/2, h/2, 0, 0),    # TL
-        (w/2, 0,   w,   h/2, w, 0),    # TR
-        (w/2, h/2, w,   h,   w, h),    # BR
-        (0,   h/2, w/2, h,   0, h),    # BL
+    ef = 0.25  # edge fraction: search within 25% of each corner
+    corner_zones = [
+        (0,         0,         w * ef,     h * ef,     0, 0),   # TL
+        (w*(1-ef),  0,         w,          h * ef,     w, 0),   # TR
+        (w*(1-ef),  h*(1-ef),  w,          h,          w, h),   # BR
+        (0,         h*(1-ef),  w * ef,     h,          0, h),   # BL
     ]
 
     corners = []
-    for qx1, qy1, qx2, qy2, rx, ry in quadrants:
-        in_q = [(cx, cy) for cx, cy in candidates if qx1 <= cx < qx2 and qy1 <= cy < qy2]
-        if not in_q:
-            return None, "markers_missing_corner"
-        best = min(in_q, key=lambda p: (p[0] - rx) ** 2 + (p[1] - ry) ** 2)
+    for zx1, zy1, zx2, zy2, rx, ry in corner_zones:
+        in_zone = [(cx, cy) for cx, cy in candidates if zx1 <= cx < zx2 and zy1 <= cy < zy2]
+        if not in_zone:
+            return None, "markers_not_in_corner_zone"
+        best = min(in_zone, key=lambda p: (p[0] - rx) ** 2 + (p[1] - ry) ** 2)
         corners.append(best)
 
-    # Validate that opposite edges are consistent length.  A real sheet is
-    # rectangular, so top ≈ bottom and left ≈ right (within 20%).  When an
-    # internal section-divider square is mistakenly chosen as a corner (because
-    # the real corner marker is at the image edge and partially filtered), one
-    # pair of opposite edges becomes significantly shorter than the other.
-    tl, tr, br, bl = [np.array(c) for c in corners]  # order: TL TR BR BL
+    # Validate that opposite edges are consistent length (within 20%).
+    tl, tr, br, bl = [np.array(c) for c in corners]
     top_w   = float(np.linalg.norm(tr - tl))
     bot_w   = float(np.linalg.norm(br - bl))
     left_h  = float(np.linalg.norm(bl - tl))
@@ -340,23 +355,56 @@ def fallback_resize(image):
 
 def create_readable_image(corrected):
     """
-    Grayscale + CLAHE + unsharp mask for YOLO input and Roboflow annotation.
+    Produces a scan-like grayscale image: white background, dark marks, crisp text.
+    Used for YOLO input and Roboflow annotation.
 
-    Larger CLAHE tiles (16x16) adapt better to exam sheets that have many
-    distinct regions with different local brightness levels.
-    The unsharp mask keeps bubble circles and text crisp.
-    No final blur is applied — sharpness matters more than smoothness here.
+    Pipeline:
+    1. Background normalization — downsample → large Gaussian → upsample gives a
+       smooth estimate of the slow illumination gradient from phone-camera lighting.
+       Dividing by this estimate maps paper → 255 and ink → proportionally darker,
+       equivalent to a flatbed scanner's illumination normalization.
+    2. CLAHE cleans up any residual local contrast variation.
+    3. Unsharp mask keeps bubble circles and text edges crisp.
     """
     gray = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
 
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
-    enhanced = clahe.apply(gray)
+    # Background estimation: resize to 10%, dilate to fill dark content (bubbles,
+    # text, markers), then blur.  Dilation takes the local maximum so dark ink
+    # pixels are replaced by surrounding paper brightness before blurring.
+    # Without dilation the blur tracks content density — regions with many filled
+    # bubbles get a falsely low bg estimate and normalise to white.
+    small = cv2.resize(gray, (0, 0), fx=0.1, fy=0.1, interpolation=cv2.INTER_AREA)
+    # 9×9 kernel at 10% scale covers features up to ~45px at full scale —
+    # large enough for bubbles (4–22px radius) and registration markers.
+    k9 = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+    bg_small = cv2.GaussianBlur(cv2.dilate(small, k9), (0, 0), 10)
+    bg = cv2.resize(bg_small, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_LINEAR)
+    bg = np.maximum(bg, 30)  # floor prevents division by ~0 in very dark corners
 
-    # Unsharp mask: boost fine detail without adding noise
+    normalized = np.clip(
+        gray.astype(np.float32) / bg.astype(np.float32) * 255, 0, 255
+    ).astype(np.uint8)
+
+    # CLAHE first: amplifies local contrast before gamma.
+    # In low-contrast phone photos the circle outlines may be only 5-10 gray
+    # levels below the paper background after normalisation — gamma alone cannot
+    # recover that.  CLAHE in small tiles stretches the local histogram so those
+    # tiny differences become clearly visible, then gamma darkens the result.
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe_out = clahe.apply(normalized)
+
+    # Gamma > 1: push contrasted midtones to clearly dark values.
+    # With CLAHE having already spread the local range, gamma=2.0 is enough.
+    gamma = 2.0
+    gamma_table = np.array(
+        [int(((i / 255.0) ** gamma) * 255 + 0.5) for i in range(256)], dtype=np.uint8
+    )
+    enhanced = cv2.LUT(clahe_out, gamma_table)
+
     blur = cv2.GaussianBlur(enhanced, (0, 0), 2.0)
-    sharpened = cv2.addWeighted(enhanced, 1.4, blur, -0.4, 0)
+    sharpened = cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)
 
-    return sharpened
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
 
 
 def create_binary_image(readable):

@@ -1,9 +1,15 @@
+# Frontend + standardization pipeline
+# Install with: pip install -r requirements.txt
 opencv-python
 numpy
-ultralytics
-torch
-torchvision
-torchaudio
-matplotlib
-pandas
-pyyaml
+streamlit
+Pillow
+
+# --- YOLO training / inference only (azota-yolo conda env) ---
+# ultralytics
+# torch
+# torchvision
+# torchaudio
+# matplotlib
+# pandas
+# pyyaml

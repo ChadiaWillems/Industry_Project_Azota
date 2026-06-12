@@ -63,9 +63,9 @@ def show_camera_page(current_dir, encoded_logo_full):
                             std_out = _project_root / "frontend" / "img" / "standardized_output"
                             output_dirs = create_output_dirs(str(std_out))
                             method = standardize_single_image(Path(saved_path), output_dirs)
-                            corrected_path = str(output_dirs["corrected"] / f"{Path(saved_path).stem}_corrected.png")
-                            if os.path.exists(corrected_path):
-                                st.session_state.standardized_image_path = corrected_path
+                            readable_path = str(output_dirs["readable"] / f"{Path(saved_path).stem}_readable.png")
+                            if os.path.exists(readable_path):
+                                st.session_state.standardized_image_path = readable_path
                                 st.session_state.standardization_method = method
                             else:
                                 st.session_state.standardized_image_path = saved_path
