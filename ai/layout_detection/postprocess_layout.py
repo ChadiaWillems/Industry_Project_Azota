@@ -212,6 +212,62 @@ def remove_overlapping_conflicting_regions(
 
     return kept
 
+
+def remove_contained_duplicates(
+    detections: List[Detection],
+    containment_threshold: float = 0.90,
+) -> List[Detection]:
+    """
+    For each class, if a smaller box is almost entirely contained within a
+    larger box of the same class, remove the LARGER one.
+
+    This handles the scan-template case where YOLO detects individual MCQ
+    columns (correct) AND the whole MCQ area as one big box (incorrect).
+    The big box contains the small per-column boxes; removing it leaves the
+    individual columns for correct per-column reading.
+
+    Containment ratio = intersection / area_of_smaller_box.
+    """
+    by_class: Dict[str, List[Detection]] = {}
+    for det in detections:
+        by_class.setdefault(det.class_name, []).append(det)
+
+    result: List[Detection] = []
+    for cls, dets in by_class.items():
+        if len(dets) < 2:
+            result.extend(dets)
+            continue
+
+        to_remove: set = set()
+        for i in range(len(dets)):
+            if i in to_remove:
+                continue
+            for j in range(len(dets)):
+                if i == j or j in to_remove:
+                    continue
+                area_i = box_area(dets[i].box)
+                area_j = box_area(dets[j].box)
+                if area_i == 0 or area_j == 0:
+                    continue
+
+                ax1, ay1, ax2, ay2 = dets[i].box
+                bx1, by1, bx2, by2 = dets[j].box
+                ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+                ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+                inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+
+                smaller_area = min(area_i, area_j)
+                if inter / smaller_area >= containment_threshold:
+                    # Remove the LARGER box (i is larger → remove i; j is larger → remove j)
+                    if area_i > area_j:
+                        to_remove.add(i)
+                    else:
+                        to_remove.add(j)
+
+        result.extend(d for k, d in enumerate(dets) if k not in to_remove)
+
+    return result
+
 def postprocess_detections(
     detections: List[Detection],
     image_width: int,
@@ -226,6 +282,11 @@ def postprocess_detections(
         detections,
         iou_threshold=0.80,
     )
+
+    # Remove wider "merged" boxes that contain narrower per-column boxes of the
+    # same class. This handles scan templates where YOLO sometimes detects both
+    # individual MCQ columns AND a single large box spanning all columns.
+    detections = remove_contained_duplicates(detections, containment_threshold=0.90)
 
     detections = keep_best_single_instances(detections)
 

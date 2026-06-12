@@ -217,7 +217,38 @@ def detect_bubble_grid(
             for (cx, cy, radius, fill_ratio, filled) in row_sorted
         ])
 
-    return BubbleGrid(bubbles=grid)
+    # Snap each bubble's display position to (median_col_x, median_row_y).
+    # HoughCircles centers are typically 2-4 px off; the column/row median
+    # across all bubbles in a section is a more stable estimate of the true
+    # grid position. We update center_x/center_y for clean visualization but
+    # keep the original fill_ratio so that sheets with slight physical curvature
+    # do not cause fill-mask regressions.
+    row_ys: dict[int, list[float]] = {}
+    col_xs: dict[int, list[float]] = {}
+    for row in grid:
+        for b in row:
+            row_ys.setdefault(b.row, []).append(b.center_y)
+            col_xs.setdefault(b.col, []).append(b.center_x)
+    reg_row_y = {r: float(np.median(ys)) for r, ys in row_ys.items()}
+    reg_col_x = {c: float(np.median(xs)) for c, xs in col_xs.items()}
+    all_radii = [b.radius for row in grid for b in row]
+    reg_radius = float(np.median(all_radii)) if all_radii else median_r
+
+    snapped: list[list[Bubble]] = []
+    for row in grid:
+        new_row: list[Bubble] = []
+        for b in row:
+            new_row.append(Bubble(
+                row=b.row, col=b.col,
+                center_x=reg_col_x.get(b.col, b.center_x),
+                center_y=reg_row_y.get(b.row, b.center_y),
+                radius=reg_radius,
+                fill_ratio=b.fill_ratio,
+                filled=b.filled,
+            ))
+        snapped.append(new_row)
+
+    return BubbleGrid(bubbles=snapped)
 
 
 def _deduplicate_candidates(
