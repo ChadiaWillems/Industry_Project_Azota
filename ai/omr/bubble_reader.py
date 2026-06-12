@@ -130,6 +130,14 @@ def detect_bubble_grid(
     candidates = _deduplicate_candidates(candidates)
 
     # Compute fill ratio for each candidate using the original grayscale image.
+    # Use an adaptive dark threshold: 85% of the crop's 90th-percentile brightness
+    # (≈ paper brightness). This handles phone photos where CLAHE pushes the paper
+    # to ~180 px — a fixed threshold of 190 would falsely count empty bubbles as dark.
+    # Cap at 190 (the calibrated threshold for clean scans) so we only adapt DOWN
+    # for dark images, never UP — raising it above 190 causes false fills on bright scans.
+    paper_brightness = float(np.percentile(gray, 90))
+    dark_threshold = int(np.clip(paper_brightness * 0.85, 120, 190))
+
     bubble_data: list[tuple[float, float, float, float, bool]] = []
     for cx, cy, radius in candidates:
         mask = np.zeros(gray.shape, dtype=np.uint8)
@@ -140,9 +148,7 @@ def detect_bubble_grid(
         if len(roi_pixels) == 0:
             continue
 
-        # Threshold at 190 (not 128) to catch pencil marks, which are light grey
-        # (~140–180) after CLAHE enhancement, not dark ink.
-        dark_count = int(np.sum(roi_pixels < 190))
+        dark_count = int(np.sum(roi_pixels < dark_threshold))
         fill_ratio = dark_count / len(roi_pixels)
         bubble_data.append((cx, cy, radius, fill_ratio, fill_ratio >= fill_threshold))
 
@@ -283,12 +289,34 @@ def read_mcq_region(
         filled = [i for i, b in enumerate(option_bubbles) if b.filled]
 
         if len(filled) == 0:
-            result[q_num] = None
+            # Best-match fallback: pick the clearly dominant bubble if nothing
+            # crossed fill_threshold (handles light pencil marks in phone photos).
+            ratios = sorted(
+                ((b.fill_ratio, i) for i, b in enumerate(option_bubbles)),
+                reverse=True,
+            )
+            best_r, best_i = ratios[0]
+            second_r = ratios[1][0] if len(ratios) > 1 else 0.0
+            if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
+                result[q_num] = options[best_i] if best_i < len(options) else None
+            else:
+                result[q_num] = None
         elif len(filled) == 1:
             idx = filled[0]
             result[q_num] = options[idx] if idx < len(options) else None
         else:
-            result[q_num] = "MULTIPLE"
+            # Multiple bubbles above threshold: resolve to the dominant one if its
+            # fill_ratio is at least 2x the second-highest (likely image noise on
+            # the runner-up). Otherwise keep MULTIPLE (genuine double fill).
+            filled_ratios = sorted(
+                ((option_bubbles[i].fill_ratio, i) for i in filled),
+                reverse=True,
+            )
+            if filled_ratios[0][0] >= filled_ratios[1][0] * 2.0:
+                idx = filled_ratios[0][1]
+                result[q_num] = options[idx] if idx < len(options) else None
+            else:
+                result[q_num] = "MULTIPLE"
 
     return result
 
@@ -322,11 +350,29 @@ def read_true_false_region(
         filled = [i for i, b in enumerate(option_bubbles) if b.filled]
 
         if len(filled) == 0:
-            result[q_num] = None
+            # Best-match fallback: same logic as MCQ.
+            ratios = sorted(
+                ((b.fill_ratio, i) for i, b in enumerate(option_bubbles)),
+                reverse=True,
+            )
+            best_r, best_i = ratios[0]
+            second_r = ratios[1][0] if len(ratios) > 1 else 0.0
+            if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
+                result[q_num] = (best_i == 0)
+            else:
+                result[q_num] = None
         elif len(filled) == 1:
             result[q_num] = (filled[0] == 0)  # col 0 = Đúng/True, col 1 = Sai/False
         else:
-            result[q_num] = "MULTIPLE"
+            # Resolve MULTIPLE if one bubble clearly dominates.
+            filled_ratios = sorted(
+                ((option_bubbles[i].fill_ratio, i) for i in filled),
+                reverse=True,
+            )
+            if filled_ratios[0][0] >= filled_ratios[1][0] * 2.0:
+                result[q_num] = (filled_ratios[0][1] == 0)
+            else:
+                result[q_num] = "MULTIPLE"
 
     return result
 
@@ -362,6 +408,24 @@ def read_numeric_region(crop: np.ndarray, **kwargs) -> Optional[str]:
             row = filled_rows[0]
             label = _NUMERIC_ROW_LABELS[row] if row < len(_NUMERIC_ROW_LABELS) else "?"
             digits.append(label)
+        elif len(filled_rows) == 0:
+            # Best-match fallback: nothing crossed fill_threshold, but pick the
+            # most-filled bubble if it clearly dominates the others.
+            col_bubbles = sorted(
+                [b for row in grid.bubbles for b in row if b.col == col_idx],
+                key=lambda b: b.fill_ratio,
+                reverse=True,
+            )
+            if col_bubbles and col_bubbles[0].fill_ratio >= 0.18:
+                second = col_bubbles[1].fill_ratio if len(col_bubbles) > 1 else 0.0
+                if col_bubbles[0].fill_ratio >= max(second * 1.5, second + 0.05):
+                    row_idx = col_bubbles[0].row
+                    label = _NUMERIC_ROW_LABELS[row_idx] if row_idx < len(_NUMERIC_ROW_LABELS) else "?"
+                    digits.append(label)
+                else:
+                    digits.append("?")
+            else:
+                digits.append("?")
         else:
             digits.append("?")
 
