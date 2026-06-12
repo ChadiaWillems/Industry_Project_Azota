@@ -425,17 +425,14 @@ def read_true_false_region(
         elif len(filled) == 1:
             result[q_num] = (filled[0] == 0)  # col 0 = Đúng/True, col 1 = Sai/False
         else:
-            # Resolve MULTIPLE if one bubble clearly dominates (2× ratio or ≥0.15 difference).
-            filled_ratios = sorted(
+            # T/F has exactly one valid answer per question. When both Đ and S
+            # appear filled (common in low-quality phone photos where CLAHE makes
+            # the unselected circle appear dark too), pick the darker bubble.
+            # Unlike MCQ, there is no legitimate "both answers" case.
+            top_r, top_i = max(
                 ((option_bubbles[i].fill_ratio, i) for i in filled),
-                reverse=True,
             )
-            top_r, top_i = filled_ratios[0]
-            sec_r = filled_ratios[1][0]
-            if top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
-                result[q_num] = (top_i == 0)
-            else:
-                result[q_num] = "MULTIPLE"
+            result[q_num] = (top_i == 0)
 
     return result
 
