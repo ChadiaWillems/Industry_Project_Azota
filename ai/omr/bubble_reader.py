@@ -366,15 +366,16 @@ def read_mcq_region(
             result[q_num] = options[idx] if idx < len(options) else None
         else:
             # Multiple bubbles above threshold: resolve to the dominant one if its
-            # fill_ratio is at least 2x the second-highest (likely image noise on
-            # the runner-up). Otherwise keep MULTIPLE (genuine double fill).
+            # fill_ratio is at least 2× the second-highest, OR if the absolute
+            # difference is ≥ 0.15 (catches ratio < 2× cases like 0.6 vs 0.4).
             filled_ratios = sorted(
                 ((option_bubbles[i].fill_ratio, i) for i in filled),
                 reverse=True,
             )
-            if filled_ratios[0][0] >= filled_ratios[1][0] * 2.0:
-                idx = filled_ratios[0][1]
-                result[q_num] = options[idx] if idx < len(options) else None
+            top_r, top_i = filled_ratios[0]
+            sec_r = filled_ratios[1][0]
+            if top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
+                result[q_num] = options[top_i] if top_i < len(options) else None
             else:
                 result[q_num] = "MULTIPLE"
 
@@ -424,13 +425,15 @@ def read_true_false_region(
         elif len(filled) == 1:
             result[q_num] = (filled[0] == 0)  # col 0 = Đúng/True, col 1 = Sai/False
         else:
-            # Resolve MULTIPLE if one bubble clearly dominates.
+            # Resolve MULTIPLE if one bubble clearly dominates (2× ratio or ≥0.15 difference).
             filled_ratios = sorted(
                 ((option_bubbles[i].fill_ratio, i) for i in filled),
                 reverse=True,
             )
-            if filled_ratios[0][0] >= filled_ratios[1][0] * 2.0:
-                result[q_num] = (filled_ratios[0][1] == 0)
+            top_r, top_i = filled_ratios[0]
+            sec_r = filled_ratios[1][0]
+            if top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
+                result[q_num] = (top_i == 0)
             else:
                 result[q_num] = "MULTIPLE"
 
