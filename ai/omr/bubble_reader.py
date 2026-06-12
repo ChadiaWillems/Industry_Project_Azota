@@ -365,16 +365,18 @@ def read_mcq_region(
             idx = filled[0]
             result[q_num] = options[idx] if idx < len(options) else None
         else:
-            # Multiple bubbles above threshold: resolve to the dominant one if its
-            # fill_ratio is at least 2× the second-highest, OR if the absolute
-            # difference is ≥ 0.15 (catches ratio < 2× cases like 0.6 vs 0.4).
             filled_ratios = sorted(
                 ((option_bubbles[i].fill_ratio, i) for i in filled),
                 reverse=True,
             )
             top_r, top_i = filled_ratios[0]
             sec_r = filled_ratios[1][0]
-            if top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
+            if len(filled) >= 3:
+                # 3+ options above threshold is physically impossible (student marks ≤2).
+                # It's CLAHE/image-quality noise making all circles appear dark.
+                # Pick the clearly darkest bubble.
+                result[q_num] = options[top_i] if top_i < len(options) else None
+            elif top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
                 result[q_num] = options[top_i] if top_i < len(options) else None
             else:
                 result[q_num] = "MULTIPLE"
