@@ -278,6 +278,58 @@ def detect_bubble_grid(
             ))
         snapped.append(new_row)
 
+    # Grid gap filling: HoughCircles sometimes misses filled bubbles because
+    # a solid dark disc has a softer outer-edge gradient than an unfilled ring.
+    # For every column that appears in ≥⌈n_rows/3⌉ rows we consider it a real
+    # grid column. Any row missing that column gets a synthetic Bubble inserted
+    # at the expected (median_col_x, median_row_y) position, with fill ratio
+    # measured directly from the image. This recovers None answers caused by
+    # a single missed filled circle while every other option was detected.
+    n_rows_snap = len(snapped)
+    min_presence = max(1, (n_rows_snap + 2) // 3)  # ceil(n_rows / 3)
+    col_count: dict[int, int] = {}
+    for row in snapped:
+        for b in row:
+            col_count[b.col] = col_count.get(b.col, 0) + 1
+    valid_cols = {col for col, cnt in col_count.items() if cnt >= min_presence}
+
+    for row_idx, row in enumerate(snapped):
+        present = {b.col for b in row}
+        missing = valid_cols - present
+        if not missing:
+            continue
+        row_y = reg_row_y.get(row_idx)
+        if row_y is None:
+            continue
+        for col_idx in sorted(missing):
+            col_x = reg_col_x.get(col_idx, col_centers[col_idx] if col_idx < len(col_centers) else None)
+            if col_x is None:
+                continue
+            cx_i, cy_i = int(round(col_x)), int(round(row_y))
+            if not (0 <= cx_i < gray.shape[1] and 0 <= cy_i < gray.shape[0]):
+                continue
+            inner_r = max(1, int(reg_radius * 0.72))
+            gap_mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.circle(gap_mask, (cx_i, cy_i), inner_r, 255, -1)
+            if bin_gray is not None:
+                gap_roi = bin_gray[gap_mask == 255]
+                if len(gap_roi) == 0:
+                    continue
+                gap_fill = int(np.sum(gap_roi == 0)) / len(gap_roi)
+            else:
+                gap_roi = gray[gap_mask == 255]
+                if len(gap_roi) == 0:
+                    continue
+                gap_fill = int(np.sum(gap_roi < dark_threshold)) / len(gap_roi)
+            snapped[row_idx].append(Bubble(
+                row=row_idx, col=col_idx,
+                center_x=float(col_x),
+                center_y=float(row_y),
+                radius=reg_radius,
+                fill_ratio=gap_fill,
+                filled=gap_fill >= fill_threshold,
+            ))
+
     return BubbleGrid(bubbles=snapped)
 
 
