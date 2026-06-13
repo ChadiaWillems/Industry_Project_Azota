@@ -27,7 +27,7 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).parent.parent / "layout_detection"))
 
 from postprocess_layout import Detection, postprocess_detections
-from crop_regions import crop_graded_regions
+from crop_regions import crop_graded_regions, CROP_PADDING
 from bubble_reader import (
     detect_bubble_grid, draw_bubble_grid, draw_sheet_with_bubbles,
     filter_grid_for_section, read_region, BubbleGrid,
@@ -117,7 +117,15 @@ def process_image(
             # Filter to answer bubbles only: removes header rows (A/B/C/D, Đ/S)
             # and label columns so false-positive circles don't appear in output.
             filtered = filter_grid_for_section(grid, section_type)
-            region_grids.append((detection.box, filtered))
+
+            # Bubble centers are relative to the padded crop, so the drawing offset
+            # must be the padded top-left corner of the crop, not the raw YOLO box.
+            # Using the raw YOLO box shifts all circles CROP_PADDING px right and down.
+            h_img, w_img = image.shape[:2]
+            pad_x1 = max(0, int(detection.box[0]) - CROP_PADDING)
+            pad_y1 = max(0, int(detection.box[1]) - CROP_PADDING)
+            padded_box = (pad_x1, pad_y1, detection.box[2], detection.box[3])
+            region_grids.append((padded_box, filtered))
 
             reading = read_region(
                 crop,

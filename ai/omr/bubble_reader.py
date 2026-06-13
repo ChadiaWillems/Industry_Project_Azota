@@ -170,6 +170,11 @@ def detect_bubble_grid(
     # Cluster into rows by Y coordinate using gap-based splitting.
     bubble_data.sort(key=lambda b: b[1])
     median_r = float(np.median([b[2] for b in bubble_data]))
+    # 1.4× median radius: absorbs within-row HoughCircles Y-jitter (~2–8 px)
+    # without splitting circles from the same physical row into different rows.
+    # Smaller values (e.g. 1.0) caused regressions where one bubble per row
+    # had >median_r Y-offset (paper curvature / scan angle), splitting that row
+    # into two partial rows and inflating the question count with spurious rows.
     row_gap = median_r * 1.4
 
     rows_raw: list[list] = []
@@ -294,25 +299,37 @@ def filter_grid_for_section(
         for row_idx, row in enumerate(grid.bubbles):
             if row_idx == 0:
                 continue  # printed A/B/C/D header row
-            if len(row) < n_options:
-                continue
-            rows.append(row[-n_options:])
+            answer_part = row[-n_options:]
+            if answer_part:
+                rows.append(answer_part)
         return BubbleGrid(bubbles=rows)
 
     if section_type == "true_false_region":
+        if not grid.bubbles:
+            return grid
+        all_cols = sorted({b.col for row in grid.bubbles for b in row})
+        answer_cols_vis = all_cols[-2:]
+        answer_col_set_vis = set(answer_cols_vis)
+        # Apply the same merged-header detection as read_true_false_region so
+        # the first question row is drawn when it was merged into row 0.
+        row0_ans_count = sum(1 for b in grid.bubbles[0] if b.col in answer_col_set_vis)
+        row0_merged = row0_ans_count > len(answer_cols_vis)
         rows = []
         for row_idx, row in enumerate(grid.bubbles):
-            if row_idx == 0:
-                continue  # printed Đ/S header row
-            if len(row) < 2:
-                continue
-            rows.append(row[-2:])
+            if row_idx == 0 and not row0_merged:
+                continue  # pure header row, skip
+            # Col-based pick: one bubble per answer col (Q1 wins over header when merged)
+            row_by_col = {b.col: b for b in row}
+            answer_part = [row_by_col[c] for c in answer_cols_vis if c in row_by_col]
+            if answer_part:
+                rows.append(answer_part)
         return BubbleGrid(bubbles=rows)
 
-    if section_type == "numeric_region" and grid.n_cols > 1:
-        # Column 0 holds the printed row-label circles (-, ,, 0-9); skip them.
-        rows = [[b for b in row if b.col > 0] for row in grid.bubbles]
-        rows = [row for row in rows if row]
+    if section_type == "numeric_region":
+        # Show all columns in the visualization. Some crops have the row-label
+        # column YOLO-clipped so col 0 is actually the first digit-answer column;
+        # hiding col 0 always would drop real answer circles from the display.
+        rows = [row for row in grid.bubbles if row]
         return BubbleGrid(bubbles=rows)
 
     return grid
@@ -338,43 +355,55 @@ def read_mcq_region(
     result: dict[int, Optional[str]] = {}
     q_num = 0
 
+    if not grid.bubbles:
+        return result
+
+    # Use the rightmost n_options global column indices as the answer columns.
+    # This col-based mapping means a missing circle in one row does NOT shift the
+    # option letters for that row (e.g. missing col 1 "B" keeps col 2 as "C").
+    all_global_cols = sorted({b.col for row in grid.bubbles for b in row})
+    answer_cols = all_global_cols[-n_options:]  # e.g. [1,2,3,4] for a 5-col grid
+
     for row_idx, row in enumerate(grid.bubbles):
         if row_idx == 0:
             continue  # skip printed A/B/C/D header row
-        if len(row) < n_options:
-            continue
+
+        row_by_col = {b.col: b for b in row}
+        # option_bubbles[i] is the bubble for answer_cols[i], or None if undetected.
+        option_bubbles: list[Optional[Bubble]] = [row_by_col.get(c) for c in answer_cols]
+
+        if not any(b is not None for b in option_bubbles):
+            continue  # row has no answer-column circles at all
 
         q_num += 1
-        option_bubbles = row[-n_options:]
-        filled = [i for i, b in enumerate(option_bubbles) if b.filled]
+        filled = [i for i, b in enumerate(option_bubbles) if b is not None and b.filled]
 
         if len(filled) == 0:
-            # Best-match fallback: pick the clearly dominant bubble if nothing
-            # crossed fill_threshold (handles light pencil marks in phone photos).
+            # Best-match fallback: only consider positions where a circle was detected.
             ratios = sorted(
-                ((b.fill_ratio, i) for i, b in enumerate(option_bubbles)),
+                [(b.fill_ratio, i) for i, b in enumerate(option_bubbles) if b is not None],
                 reverse=True,
             )
-            best_r, best_i = ratios[0]
-            second_r = ratios[1][0] if len(ratios) > 1 else 0.0
-            if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
-                result[q_num] = options[best_i] if best_i < len(options) else None
-            else:
+            if not ratios:
                 result[q_num] = None
+            else:
+                best_r, best_i = ratios[0]
+                second_r = ratios[1][0] if len(ratios) > 1 else 0.0
+                if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
+                    result[q_num] = options[best_i] if best_i < len(options) else None
+                else:
+                    result[q_num] = None
         elif len(filled) == 1:
             idx = filled[0]
             result[q_num] = options[idx] if idx < len(options) else None
         else:
             filled_ratios = sorted(
-                ((option_bubbles[i].fill_ratio, i) for i in filled),
+                ((option_bubbles[i].fill_ratio, i) for i in filled if option_bubbles[i] is not None),
                 reverse=True,
             )
             top_r, top_i = filled_ratios[0]
             sec_r = filled_ratios[1][0]
             if len(filled) >= 3:
-                # 3+ options above threshold is physically impossible (student marks ≤2).
-                # It's CLAHE/image-quality noise making all circles appear dark.
-                # Pick the clearly darkest bubble.
                 result[q_num] = options[top_i] if top_i < len(options) else None
             elif top_r >= sec_r * 2.0 or (top_r - sec_r) >= 0.15:
                 result[q_num] = options[top_i] if top_i < len(options) else None
@@ -402,37 +431,57 @@ def read_true_false_region(
     result: dict[int, Optional[bool | str]] = {}
     q_num = 0
 
+    if not grid.bubbles:
+        return result
+
+    all_global_cols = sorted({b.col for row in grid.bubbles for b in row})
+    answer_cols = all_global_cols[-2:]  # rightmost 2: [Đúng col, Sai col]
+    answer_col_set = set(answer_cols)
+
+    # Detect merged header+Q1 row: if row 0 contains more answer-column circles than
+    # there are answer columns, the row-clustering step merged the printed Đ/S header
+    # with question (a). The col-dict build keeps the lower circle per col (Q1, larger Y)
+    # since bubbles in the row are ordered by X, and equal-X ties are stable-sorted by
+    # original insertion order (ascending Y), so the last assignment wins = Q1 circle.
+    row0_answer_count = (
+        sum(1 for b in grid.bubbles[0] if b.col in answer_col_set)
+        if grid.bubbles else 0
+    )
+    row0_has_merged_q1 = row0_answer_count > len(answer_cols)
+
     for row_idx, row in enumerate(grid.bubbles):
-        if row_idx == 0:
-            continue  # skip printed header row
-        if len(row) < 2:
+        if row_idx == 0 and not row0_has_merged_q1:
+            continue  # pure header row, skip it
+
+        row_by_col = {b.col: b for b in row}
+        option_bubbles: list[Optional[Bubble]] = [row_by_col.get(c) for c in answer_cols]
+
+        if not any(b is not None for b in option_bubbles):
             continue
 
         q_num += 1
-        option_bubbles = row[-2:]
-        filled = [i for i, b in enumerate(option_bubbles) if b.filled]
+        filled = [i for i, b in enumerate(option_bubbles) if b is not None and b.filled]
 
         if len(filled) == 0:
-            # Best-match fallback: same logic as MCQ.
             ratios = sorted(
-                ((b.fill_ratio, i) for i, b in enumerate(option_bubbles)),
+                [(b.fill_ratio, i) for i, b in enumerate(option_bubbles) if b is not None],
                 reverse=True,
             )
-            best_r, best_i = ratios[0]
-            second_r = ratios[1][0] if len(ratios) > 1 else 0.0
-            if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
-                result[q_num] = (best_i == 0)
-            else:
+            if not ratios:
                 result[q_num] = None
+            else:
+                best_r, best_i = ratios[0]
+                second_r = ratios[1][0] if len(ratios) > 1 else 0.0
+                if best_r >= 0.15 and best_r >= max(second_r * 1.5, second_r + 0.05):
+                    result[q_num] = (best_i == 0)
+                else:
+                    result[q_num] = None
         elif len(filled) == 1:
             result[q_num] = (filled[0] == 0)  # col 0 = Đúng/True, col 1 = Sai/False
         else:
-            # T/F has exactly one valid answer per question. When both Đ and S
-            # appear filled (common in low-quality phone photos where CLAHE makes
-            # the unselected circle appear dark too), pick the darker bubble.
-            # Unlike MCQ, there is no legitimate "both answers" case.
+            # T/F has exactly one valid answer per question; pick the darker bubble.
             top_r, top_i = max(
-                ((option_bubbles[i].fill_ratio, i) for i in filled),
+                ((option_bubbles[i].fill_ratio, i) for i in filled if option_bubbles[i] is not None),
             )
             result[q_num] = (top_i == 0)
 

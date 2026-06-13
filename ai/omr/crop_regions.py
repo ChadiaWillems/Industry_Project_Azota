@@ -18,6 +18,10 @@ from postprocess_layout import Detection
 # Section types that the OMR reader handles.
 GRADABLE_SECTION_TYPES = {"mcq_region", "true_false_region", "numeric_region"}
 
+# Padding added around every cropped region. Must match the default used in
+# crop_graded_regions so that read_sheet.py can recover the true crop origin.
+CROP_PADDING = 12
+
 
 class RegionCrop(NamedTuple):
     detection: Detection
@@ -38,7 +42,7 @@ def crop_region(image: np.ndarray, detection: Detection, padding: int = 4) -> np
 def crop_graded_regions(
     image: np.ndarray,
     detections: list[Detection],
-    padding: int = 6,
+    padding: int = CROP_PADDING,
 ) -> dict[str, list[RegionCrop]]:
     """
     Crop all gradable regions from a sheet image, grouped by section type.
