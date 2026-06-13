@@ -260,7 +260,6 @@ def _deduplicate_candidates(
     candidates: list[tuple[float, float, float]],
 ) -> list[tuple[float, float, float]]:
     """Remove near-duplicate detections by keeping the larger circle when two overlap."""
-    # Sort largest first so we keep the more-representative circle.
     sorted_c = sorted(candidates, key=lambda c: c[2], reverse=True)
     kept: list[tuple[float, float, float]] = []
     for cx, cy, r in sorted_c:
@@ -309,16 +308,11 @@ def filter_grid_for_section(
             return grid
         all_cols = sorted({b.col for row in grid.bubbles for b in row})
         answer_cols_vis = all_cols[-2:]
-        answer_col_set_vis = set(answer_cols_vis)
-        # Apply the same merged-header detection as read_true_false_region so
-        # the first question row is drawn when it was merged into row 0.
-        row0_ans_count = sum(1 for b in grid.bubbles[0] if b.col in answer_col_set_vis)
-        row0_merged = row0_ans_count > len(answer_cols_vis)
+        # T/F column headers ("Đ S") are printed as plain text, not as bubble
+        # circles — HoughCircles never detects them. Row 0 in the grid IS the
+        # first question row (a), so no row should be unconditionally skipped.
         rows = []
-        for row_idx, row in enumerate(grid.bubbles):
-            if row_idx == 0 and not row0_merged:
-                continue  # pure header row, skip
-            # Col-based pick: one bubble per answer col (Q1 wins over header when merged)
+        for row in grid.bubbles:
             row_by_col = {b.col: b for b in row}
             answer_part = [row_by_col[c] for c in answer_cols_vis if c in row_by_col]
             if answer_part:
@@ -420,9 +414,10 @@ def read_true_false_region(
     """
     Read a true/false region.
 
-    Row 0 is the printed header row (Đúng/Sai labels) — skipped automatically.
     The rightmost 2 columns per row are [Đúng, Sai].
     Question numbers start at 1.
+    Unlike MCQ, T/F column headers ("Đ S") are plain text — not bubble circles —
+    so no header row is skipped; all detected rows are treated as question rows.
 
     Returns:
         {question_number: True|False|"MULTIPLE"|None}
@@ -436,23 +431,11 @@ def read_true_false_region(
 
     all_global_cols = sorted({b.col for row in grid.bubbles for b in row})
     answer_cols = all_global_cols[-2:]  # rightmost 2: [Đúng col, Sai col]
-    answer_col_set = set(answer_cols)
 
-    # Detect merged header+Q1 row: if row 0 contains more answer-column circles than
-    # there are answer columns, the row-clustering step merged the printed Đ/S header
-    # with question (a). The col-dict build keeps the lower circle per col (Q1, larger Y)
-    # since bubbles in the row are ordered by X, and equal-X ties are stable-sorted by
-    # original insertion order (ascending Y), so the last assignment wins = Q1 circle.
-    row0_answer_count = (
-        sum(1 for b in grid.bubbles[0] if b.col in answer_col_set)
-        if grid.bubbles else 0
-    )
-    row0_has_merged_q1 = row0_answer_count > len(answer_cols)
-
-    for row_idx, row in enumerate(grid.bubbles):
-        if row_idx == 0 and not row0_has_merged_q1:
-            continue  # pure header row, skip it
-
+    # T/F column headers ("Đ S" or "Đúng Sai") are printed as plain text, not as
+    # bubble circles, so HoughCircles never detects them. Row 0 in the grid IS the
+    # first actual question row (a) — there is no header row to skip.
+    for row in grid.bubbles:
         row_by_col = {b.col: b for b in row}
         option_bubbles: list[Optional[Bubble]] = [row_by_col.get(c) for c in answer_cols]
 
