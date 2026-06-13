@@ -22,6 +22,7 @@ import argparse
 from pathlib import Path
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "layout_detection"))
@@ -32,6 +33,22 @@ from bubble_reader import (
     detect_bubble_grid, draw_bubble_grid, draw_sheet_with_bubbles,
     filter_grid_for_section, read_region, BubbleGrid,
 )
+
+
+def _binary_path(readable_path: Path) -> Path:
+    """Derive the binary/ counterpart of a readable/ image path.
+
+    data/test_filled/readable/000_readable.png
+    → data/test_filled/binary/000_binary.png
+    """
+    parts = list(readable_path.parts)
+    try:
+        idx = parts.index("readable")
+    except ValueError:
+        return Path()
+    parts[idx] = "binary"
+    stem = readable_path.stem.replace("_readable", "_binary")
+    return Path(*parts).with_name(stem + readable_path.suffix)
 
 
 def _yolo_result_to_detections(result) -> list[Detection]:
@@ -84,6 +101,10 @@ def process_image(
     if image is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
 
+    # Load the corresponding binary/ image for fill ratio measurement (T/F + Numeric).
+    bin_path = _binary_path(image_path)
+    binary_image = cv2.imread(str(bin_path), cv2.IMREAD_GRAYSCALE) if bin_path.exists() else None
+
     results = model.predict(
         source=str(image_path),
         conf=args.conf,
@@ -112,8 +133,21 @@ def process_image(
         section_readings = []
 
         for idx, (detection, crop) in enumerate(crops):
+            # Binary fill measurement for T/F and Numeric only.
+            # MCQ is excluded: 4 tightly-packed columns cause ring-pixel bleed in
+            # the binary image that inflates fill ratios → more MULTIPLE detections.
+            h_img, w_img = image.shape[:2]
+            if binary_image is not None and section_type != "mcq_region":
+                pad_x1 = max(0, int(detection.box[0]) - CROP_PADDING)
+                pad_y1 = max(0, int(detection.box[1]) - CROP_PADDING)
+                pad_x2 = min(w_img - 1, int(detection.box[2]) + CROP_PADDING)
+                pad_y2 = min(h_img - 1, int(detection.box[3]) + CROP_PADDING)
+                binary_crop: np.ndarray | None = binary_image[pad_y1:pad_y2, pad_x1:pad_x2]
+            else:
+                binary_crop = None
+
             # Compute the grid once — reuse for both interpretation and visualization.
-            grid = detect_bubble_grid(crop, fill_threshold=args.fill_threshold)
+            grid = detect_bubble_grid(crop, fill_threshold=args.fill_threshold, binary_crop=binary_crop)
             # Filter to answer bubbles only: removes header rows (A/B/C/D, Đ/S)
             # and label columns so false-positive circles don't appear in output.
             filtered = filter_grid_for_section(grid, section_type)
@@ -121,7 +155,6 @@ def process_image(
             # Bubble centers are relative to the padded crop, so the drawing offset
             # must be the padded top-left corner of the crop, not the raw YOLO box.
             # Using the raw YOLO box shifts all circles CROP_PADDING px right and down.
-            h_img, w_img = image.shape[:2]
             pad_x1 = max(0, int(detection.box[0]) - CROP_PADDING)
             pad_y1 = max(0, int(detection.box[1]) - CROP_PADDING)
             padded_box = (pad_x1, pad_y1, detection.box[2], detection.box[3])
@@ -131,6 +164,7 @@ def process_image(
                 crop,
                 section_type,
                 fill_threshold=args.fill_threshold,
+                binary_crop=binary_crop,
             )
             reading["region_index"] = idx
             reading["bbox"] = [round(v, 1) for v in detection.box]

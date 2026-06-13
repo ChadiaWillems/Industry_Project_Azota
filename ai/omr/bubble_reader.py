@@ -82,15 +82,23 @@ def detect_bubble_grid(
     fill_threshold: float = 0.35,
     circularity_min: float = 0.35,  # kept for API compatibility, not used by Hough
     _debug_binary_path: str | None = None,
+    binary_crop: np.ndarray | None = None,
 ) -> BubbleGrid:
     """
     Detect bubbles in a cropped region and return them as a 2D grid.
 
     Args:
-        crop: Grayscale or BGR image of the region.
+        crop: Grayscale or BGR image of the region (readable/).
         min_radius: Minimum bubble radius in pixels.
         max_radius: Maximum bubble radius in pixels.
         fill_threshold: Dark-pixel fraction above which a bubble is considered filled.
+        binary_crop: Optional pre-thresholded crop from binary/ (same spatial extent as
+            crop). When supplied, fill ratios are measured by counting zero-value pixels
+            (dark pencil marks) in this image rather than applying an adaptive threshold
+            to the readable grayscale. binary/ uses THRESH_BINARY so dark==0, paper==255.
+            HoughCircles still runs on the readable grayscale regardless.
+            NOTE: do not pass binary_crop for mcq_region — the 4 tightly-packed columns
+            cause ring-pixel bleed that inflates fill ratios and increases MULTIPLE.
 
     Returns:
         BubbleGrid with rows sorted top-to-bottom and columns left-to-right.
@@ -103,6 +111,18 @@ def detect_bubble_grid(
             gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     else:
         gray = crop.copy()
+
+    # Normalise binary_crop to 2D grayscale if provided.
+    bin_gray: np.ndarray | None = None
+    if binary_crop is not None:
+        if binary_crop.ndim == 3:
+            bin_gray = binary_crop[:, :, 0] if binary_crop.shape[2] == 1 else cv2.cvtColor(binary_crop, cv2.COLOR_BGR2GRAY)
+        else:
+            bin_gray = binary_crop
+        # Standardized binary/ and readable/ images can differ by 1px due to
+        # rounding during perspective correction.
+        if bin_gray.shape != gray.shape:
+            bin_gray = cv2.resize(bin_gray, (gray.shape[1], gray.shape[0]), interpolation=cv2.INTER_NEAREST)
 
     # Save binary debug image if requested.
     if _debug_binary_path is not None:
@@ -141,14 +161,12 @@ def detect_bubble_grid(
     # Remove duplicates: if two candidates are very close together, keep the larger one.
     candidates = _deduplicate_candidates(candidates)
 
-    # Compute fill ratio for each candidate using the original grayscale image.
-    # Use an adaptive dark threshold: 85% of the crop's 90th-percentile brightness
-    # (≈ paper brightness). This handles phone photos where CLAHE pushes the paper
-    # to ~180 px — a fixed threshold of 190 would falsely count empty bubbles as dark.
-    # Cap at 190 (the calibrated threshold for clean scans) so we only adapt DOWN
-    # for dark images, never UP — raising it above 190 causes false fills on bright scans.
-    paper_brightness = float(np.percentile(gray, 90))
-    dark_threshold = int(np.clip(paper_brightness * 0.85, 120, 190))
+    # Compute fill ratio for each candidate.
+    # When binary_crop is provided: count zero-value pixels (dark=0 in THRESH_BINARY).
+    # Fallback: adaptive dark threshold on the readable grayscale (85% of paper brightness).
+    if bin_gray is None:
+        paper_brightness = float(np.percentile(gray, 90))
+        dark_threshold = int(np.clip(paper_brightness * 0.85, 120, 190))
 
     bubble_data: list[tuple[float, float, float, float, bool]] = []
     for cx, cy, radius in candidates:
@@ -156,12 +174,19 @@ def detect_bubble_grid(
         inner_r = max(1, int(radius * 0.72))
         cv2.circle(mask, (int(cx), int(cy)), inner_r, 255, -1)
 
-        roi_pixels = gray[mask == 255]
-        if len(roi_pixels) == 0:
-            continue
+        if bin_gray is not None:
+            bin_roi = bin_gray[mask == 255]
+            if len(bin_roi) == 0:
+                continue
+            dark_count = int(np.sum(bin_roi == 0))
+            fill_ratio = dark_count / len(bin_roi)
+        else:
+            roi_pixels = gray[mask == 255]
+            if len(roi_pixels) == 0:
+                continue
+            dark_count = int(np.sum(roi_pixels < dark_threshold))
+            fill_ratio = dark_count / len(roi_pixels)
 
-        dark_count = int(np.sum(roi_pixels < dark_threshold))
-        fill_ratio = dark_count / len(roi_pixels)
         bubble_data.append((cx, cy, radius, fill_ratio, fill_ratio >= fill_threshold))
 
     if not bubble_data:
