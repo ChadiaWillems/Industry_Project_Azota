@@ -39,6 +39,10 @@ def show_preview_page(logo_html, COLOR_SECONDARY):
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Retake", key="retake_btn"):
+            for _k in ("omr_result", "grading_result", "_grading_key_id",
+                       "_omr_np_image", "_omr_region_grids", "_omr_output_dir",
+                       "_omr_stem", "_omr_graded_path", "_omr_student_info_crop"):
+                st.session_state.pop(_k, None)
             st.session_state.screen = "camera"
             st.rerun()
             

@@ -385,23 +385,53 @@ def filter_grid_for_section(
             return grid
         all_cols = sorted({b.col for row in grid.bubbles for b in row})
         answer_cols_vis = all_cols[-2:]
-        # T/F column headers ("Đ S") are printed as plain text, not as bubble
-        # circles — HoughCircles never detects them. Row 0 in the grid IS the
-        # first question row (a), so no row should be unconditionally skipped.
         rows = []
         for row in grid.bubbles:
             row_by_col = {b.col: b for b in row}
             answer_part = [row_by_col[c] for c in answer_cols_vis if c in row_by_col]
             if answer_part:
                 rows.append(answer_part)
+        # T/F blocks always have exactly 4 sub-questions (a–d). Extra rows come
+        # from HoughCircles detecting circles in the letter labels or parentheses
+        # above the answer rows. False detections are always at the top, so keep
+        # the bottom 4 rows.
+        if len(rows) > 4:
+            rows = rows[-4:]
         return BubbleGrid(bubbles=rows)
 
     if section_type == "numeric_region":
-        # Show all columns in the visualization. Some crops have the row-label
-        # column YOLO-clipped so col 0 is actually the first digit-answer column;
-        # hiding col 0 always would drop real answer circles from the display.
+        # Keep the bottom 12 rows (false detections from labels are always at top).
         rows = [row for row in grid.bubbles if row]
-        return BubbleGrid(bubbles=rows)
+        if len(rows) > 12:
+            rows = rows[-12:]
+
+        # Determine start_col (same logic as read_numeric_region).
+        col_0_count = sum(1 for row in rows if any(b.col == 0 for b in row))
+        start_col = 0 if col_0_count > len(rows) * 0.5 else 1
+
+        # Count bubbles per column; keep only columns with enough bubbles
+        # (real answer columns) and cap at 4.
+        col_bubble_count: dict[int, int] = {}
+        for row in rows:
+            for b in row:
+                if b.col >= start_col:
+                    col_bubble_count[b.col] = col_bubble_count.get(b.col, 0) + 1
+        min_col_bubbles = min(3, max(1, len(rows) // 4))
+        keep_cols = sorted(
+            col for col, cnt in col_bubble_count.items()
+            if cnt >= min_col_bubbles
+        )
+        if len(keep_cols) > 4:
+            keep_cols = sorted(
+                sorted(keep_cols, key=lambda c: col_bubble_count.get(c, 0), reverse=True)[:4]
+            )
+        keep_col_set = set(keep_cols)
+        filtered_rows = [
+            [b for b in row if b.col in keep_col_set]
+            for row in rows
+        ]
+        filtered_rows = [r for r in filtered_rows if r]
+        return BubbleGrid(bubbles=filtered_rows)
 
     return grid
 
@@ -509,10 +539,19 @@ def read_true_false_region(
     all_global_cols = sorted({b.col for row in grid.bubbles for b in row})
     answer_cols = all_global_cols[-2:]  # rightmost 2: [Đúng col, Sai col]
 
-    # T/F column headers ("Đ S" or "Đúng Sai") are printed as plain text, not as
-    # bubble circles, so HoughCircles never detects them. Row 0 in the grid IS the
-    # first actual question row (a) — there is no header row to skip.
-    for row in grid.bubbles:
+    # Collect candidate rows first, then trim to exactly 4 (a–d).
+    # Extra rows come from HoughCircles detecting circles in the "Câu X" header
+    # text (parentheses) or registration markers at crop edges.
+    candidate_rows = [
+        row for row in grid.bubbles
+        if any(b is not None for b in (
+            {b.col: b for b in row}.get(c) for c in answer_cols
+        ))
+    ]
+    if len(candidate_rows) > 4:
+        candidate_rows = candidate_rows[-4:]
+
+    for row in candidate_rows:
         row_by_col = {b.col: b for b in row}
         option_bubbles: list[Optional[Bubble]] = [row_by_col.get(c) for c in answer_cols]
 
@@ -558,49 +597,164 @@ def read_numeric_region(crop: np.ndarray, **kwargs) -> Optional[str]:
     """
     Read a numeric region.
 
-    Column 0 is the printed row-label column (-, ,, 0–9) — skipped automatically.
-    Remaining columns left→right represent digit positions.
-    Rows top→bottom map to _NUMERIC_ROW_LABELS.
+    Rows top→bottom map to _NUMERIC_ROW_LABELS (-, ,, 0–9).  Columns
+    left→right represent digit positions 1–4 of the answer.
 
-    Returns the answer as a string (e.g. "-12", "3") or None if no bubbles found.
-    Positions with no filled bubble or multiple filled bubbles are shown as "?".
+    Two sheet layouts exist:
+    - Standard: col 0 appears only in corner rows (registration marker false
+      detections) → skip col 0; answer columns are 1–4.
+    - Constrained: col 0 is present in most rows and IS digit position 1 →
+      use col 0; answer columns are 0–3.
+
+    Returns the answer string (e.g. "9", "-3", "1,5") with trailing blank
+    positions stripped.  Returns None if no bubbles were found.  Unresolved
+    positions are represented as "?".
     """
     grid = detect_bubble_grid(crop, **kwargs)
     if grid.n_cols == 0:
         return None
 
-    # Skip column 0 (printed row-label circles for -, ,, 0-9).
-    start_col = 1 if grid.n_cols > 1 else 0
+    fill_threshold = kwargs.get("fill_threshold", 0.35)
 
-    digits: list[str] = []
-    for col_idx in range(start_col, grid.n_cols):
-        filled_rows = grid.filled_in_col(col_idx)
-        if len(filled_rows) == 1:
-            row = filled_rows[0]
-            label = _NUMERIC_ROW_LABELS[row] if row < len(_NUMERIC_ROW_LABELS) else "?"
-            digits.append(label)
-        elif len(filled_rows) == 0:
-            # Best-match fallback: nothing crossed fill_threshold, but pick the
-            # most-filled bubble if it clearly dominates the others.
-            col_bubbles = sorted(
-                [b for row in grid.bubbles for b in row if b.col == col_idx],
-                key=lambda b: b.fill_ratio,
-                reverse=True,
-            )
-            if col_bubbles and col_bubbles[0].fill_ratio >= 0.18:
-                second = col_bubbles[1].fill_ratio if len(col_bubbles) > 1 else 0.0
-                if col_bubbles[0].fill_ratio >= max(second * 1.5, second + 0.05):
-                    row_idx = col_bubbles[0].row
-                    label = _NUMERIC_ROW_LABELS[row_idx] if row_idx < len(_NUMERIC_ROW_LABELS) else "?"
-                    digits.append(label)
-                else:
-                    digits.append("?")
+    # Remove registration-marker rows: a single bubble with fill > 0.90 and
+    # all other bubbles in the row at fill < 0.10.  These come from HoughCircles
+    # picking up the corner black squares at the top/bottom of the YOLO crop.
+    real_rows: list[list[Bubble]] = []
+    for row in grid.bubbles:
+        high = [b for b in row if b.fill_ratio > 0.90]
+        low  = [b for b in row if b.fill_ratio <= 0.90]
+        if len(high) == 1 and all(b.fill_ratio < 0.10 for b in low):
+            continue
+        real_rows.append(row)
+
+    if not real_rows:
+        return None
+
+    # False detections from letter labels / answer box at the top of the crop
+    # are always above the 12 real answer rows.  Keep the bottom 12.
+    if len(real_rows) > 12:
+        real_rows = real_rows[-12:]
+
+    # Determine whether col 0 is an answer column or a marker/label column.
+    # If col 0 appears in the majority of real rows it is a digit-position column
+    # (constrained layout, no separate row-label column).
+    # If it only appears in ≤1 rows it is a registration marker artefact → skip.
+    col_0_count = sum(1 for row in real_rows if any(b.col == 0 for b in row))
+    start_col = 0 if col_0_count > len(real_rows) * 0.5 else 1
+
+    # Count bubbles per column across all real rows to distinguish answer columns
+    # (bubbles in most rows) from false-detection columns (from text/letter artifacts,
+    # typically only 1–2 bubbles).
+    col_bubble_count: dict[int, int] = {}
+    for row in real_rows:
+        for b in row:
+            if b.col >= start_col:
+                col_bubble_count[b.col] = col_bubble_count.get(b.col, 0) + 1
+
+    # Real answer columns appear in at least 3 rows (or 25% of real_rows if fewer
+    # than 12 rows were detected).  Artifact columns from text/letters have 1–2.
+    min_col_bubbles = min(3, max(1, len(real_rows) // 4))
+    all_answer_cols = sorted(
+        col for col, count in col_bubble_count.items()
+        if count >= min_col_bubbles
+    )
+    if not all_answer_cols:
+        return None
+
+    # Numeric blocks have exactly 4 digit positions.  If filtering left more than 4
+    # columns keep the 4 most-populated ones (ties broken by column index).
+    if len(all_answer_cols) > 4:
+        all_answer_cols = sorted(
+            sorted(all_answer_cols, key=lambda c: col_bubble_count.get(c, 0), reverse=True)[:4]
+        )
+
+    n_pos = len(all_answer_cols)  # total digit positions (used for constraint check)
+
+    def _constrained(label: str, col_pos: int) -> str:
+        """Return '?' for physically impossible label/position combos.
+
+        On Vietnamese exam sheets:
+        - '-' (minus) is only valid at the first digit position.
+        - ',' (decimal comma) is only valid at internal positions (not first or last).
+        """
+        if label == "-" and col_pos != 0:
+            return "?"
+        if label == "," and (col_pos == 0 or col_pos == n_pos - 1):
+            return "?"
+        return label
+
+    digits: list[Optional[str]] = []
+    for col_pos, col_idx in enumerate(all_answer_cols):
+        # Collect (real_row_index, bubble) for this column in row order.
+        col_entries: list[tuple[int, Bubble]] = [
+            (ri, b)
+            for ri, row in enumerate(real_rows)
+            for b in row
+            if b.col == col_idx
+        ]
+
+        if not col_entries:
+            digits.append(None)
+            continue
+
+        max_fill = max(b.fill_ratio for _, b in col_entries)
+
+        if max_fill < 0.15:
+            # Truly blank column: number ends before this digit position.
+            digits.append(None)
+            continue
+
+        sorted_entries = sorted(col_entries, key=lambda x: x[1].fill_ratio, reverse=True)
+        top_ri, top_b  = sorted_entries[0]
+        second_fill    = sorted_entries[1][1].fill_ratio if len(sorted_entries) > 1 else 0.0
+
+        filled = [(ri, b) for ri, b in col_entries if b.fill_ratio >= fill_threshold]
+
+        def _dominant(top_fill: float, sec_fill: float) -> bool:
+            return top_fill >= 2 * sec_fill or top_fill - sec_fill >= 0.15
+
+        def _label(ri: int) -> str:
+            raw = _NUMERIC_ROW_LABELS[ri] if ri < len(_NUMERIC_ROW_LABELS) else "?"
+            return _constrained(raw, col_pos)
+
+        if len(filled) == 1:
+            ri, top_b_f = filled[0]
+            # Require the single filled bubble to clearly stand out from the runner-up.
+            # This filters CLAHE noise fills (e.g. 0.37 vs runner-up 0.28) that would
+            # otherwise produce false "-" or "," labels.
+            if top_b_f.fill_ratio - second_fill >= 0.10:
+                digits.append(_label(ri))
+            else:
+                digits.append("?")
+        elif len(filled) == 0:
+            # Nothing crossed fill_threshold: pick the best if it clearly dominates.
+            if top_b.fill_ratio >= 0.18 and _dominant(top_b.fill_ratio, second_fill):
+                digits.append(_label(top_ri))
             else:
                 digits.append("?")
         else:
-            digits.append("?")
+            # Multiple above threshold: resolve to dominant, else ambiguous.
+            sorted_filled = sorted(filled, key=lambda x: x[1].fill_ratio, reverse=True)
+            f_ri, f_top = sorted_filled[0]
+            f_sec = sorted_filled[1][1].fill_ratio
+            if _dominant(f_top.fill_ratio, f_sec):
+                digits.append(_label(f_ri))
+            else:
+                digits.append("?")
 
-    return "".join(digits) if digits else None
+    # Strip trailing blank positions (answer has fewer digits than max columns).
+    while digits and digits[-1] is None:
+        digits.pop()
+
+    if not digits:
+        return None
+
+    result = "".join(d if d is not None else "?" for d in digits)
+    # A trailing comma means the digit after the decimal separator was blank/undetected.
+    # Replace it with "?" so the string is syntactically valid.
+    if result.endswith(","):
+        result = result[:-1] + "?"
+    return result
 
 
 def read_region(crop: np.ndarray, section_type: str, **kwargs) -> dict:

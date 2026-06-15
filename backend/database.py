@@ -111,6 +111,25 @@ def insert_exam_file(exam_name, subject, file_bytes):
     conn.commit()
     conn.close()
 
+def update_exam_file(exam_id: int, file_bytes: bytes) -> None:
+    """Replace the file_blob of an existing exam_files row."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE exam_files SET file_blob = ? WHERE id = ?", (file_bytes, exam_id))
+    conn.commit()
+    conn.close()
+
+
+def list_exam_files():
+    """Return all saved answer keys as [(id, name, subject, uploaded_at), ...]."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, subject, uploaded_at FROM exam_files ORDER BY uploaded_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def get_exam_file(file_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()

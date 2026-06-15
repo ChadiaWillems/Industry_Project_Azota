@@ -1,15 +1,29 @@
-# Frontend + standardization pipeline
-# Install with: pip install -r requirements.txt
+# Azota Exam Grading Pipeline — Python dependencies
+#
+# All packages run in the same conda environment (azota-yolo).
+# Install with:
+#   pip install -r requirements.txt
+#
+# Create the conda env first:
+#   conda create -n azota-yolo python=3.10
+#   conda activate azota-yolo
+#   pip install -r requirements.txt
+
+# --- Core image processing ---
 opencv-python
 numpy
-streamlit
 Pillow
 
-# --- YOLO training / inference only (azota-yolo conda env) ---
-# ultralytics
-# torch
-# torchvision
-# torchaudio
-# matplotlib
-# pandas
-# pyyaml
+# --- YOLO layout detection ---
+ultralytics
+torch
+torchvision
+
+# --- OMR / OCR ---
+easyocr
+
+# --- Grading / Excel ---
+openpyxl
+
+# --- Frontend ---
+streamlit

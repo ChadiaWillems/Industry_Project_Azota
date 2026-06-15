@@ -16,7 +16,9 @@ from postprocess_layout import Detection
 
 
 # Section types that the OMR reader handles.
-GRADABLE_SECTION_TYPES = {"mcq_region", "true_false_region", "numeric_region"}
+# score_field_region is included so essay score OCR can crop it; it does not go
+# through bubble reading but is passed to extract_essay_score in read_sheet.py.
+GRADABLE_SECTION_TYPES = {"mcq_region", "true_false_region", "numeric_region", "score_field_region"}
 
 # Padding added around every cropped region. Must match the default used in
 # crop_graded_regions so that read_sheet.py can recover the true crop origin.

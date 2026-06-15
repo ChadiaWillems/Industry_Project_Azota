@@ -13,6 +13,13 @@ build/
 # Frontend runtime — uploaded images and standardization outputs
 frontend/img/captured_submission.png
 frontend/img/standardized_output/
+frontend/img/blank_template.png
+frontend/img/blank_standardized/
+frontend/excel/
+
+# Test data — student exam photos (privacy), not needed by client
+data/test_score_field/
+data/score_field/
 
 # Data — generated or large, not tracked
 data/input/
