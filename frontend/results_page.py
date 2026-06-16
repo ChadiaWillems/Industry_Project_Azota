@@ -69,7 +69,7 @@ def _run_omr(image_path: str) -> dict | None:
         args = argparse.Namespace(
             conf=0.25,
             imgsz=1024,
-            device="0",
+            device="cpu",
             fill_threshold=0.35,
             debug=False,
         )
@@ -160,6 +160,7 @@ def _ensure_graded_image(omr_result: dict | None, grading: dict | None) -> None:
 
 
 def show_results_page(logo_html, local_img_path):
+    # --- 1. GLOBALE PAGINA STYLING ---
     st.markdown("""
         <style>
         .logo-container-preview {
@@ -193,26 +194,28 @@ def show_results_page(logo_html, local_img_path):
             margin-bottom: 15px;
             padding-left: 10px;
         }
-        .screenshot-btn-container {
-            display: flex !important;
-            flex-direction: row !important;
-            justify-content: center !important;
-            align-items: center !important;
-            gap: 15px !important;
-            width: 100% !important;
-            max-width: 240px !important;
-            margin: 20px auto 30px auto !important;
-        }
-        .screenshot-btn-container div { flex: 1 !important; }
-        .screenshot-btn-container .stButton>button {
-            background-color: #D6D6D6 !important;
-            color: #000000 !important;
-            border: none !important;
-            height: 38px !important;
-            font-size: 15px !important;
-            font-weight: normal !important;
-            border-radius: 20px !important;
-            box-shadow: none !important;
+                
+                /* Grade next sheet knop */
+div[data-testid="stButton"] > button {
+    background-color: #0052CC !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 50px !important;
+    height: 44px !important;
+    font-size: 15px !important;
+    font-weight: bold !important;
+    letter-spacing: 0.5px;
+    transition: background-color 0.2s ease;
+}
+
+div[data-testid="stButton"] > button:hover {
+    background-color: #0043A4 !important;
+    color: white !important;
+}
+        
+        /* 🚀 GLOBALE SELECTOR OM DE NATIVE STREAMLIT KNOP VOLLEDIG TE VERBERGEN */
+        div[data-testid="stMainBlockContainer"] div:has(> button[key="hidden_save_btn"]) {
+            display: none !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -317,9 +320,8 @@ def show_results_page(logo_html, local_img_path):
     if grading is not None:
         _show_answer_breakdown(grading)
 
-    # --- Done button ---
-    st.markdown('<div class="screenshot-btn-container">', unsafe_allow_html=True)
-    if st.button("Grade next sheet", key="screenshot_save_btn", use_container_width=True):
+    # Native knop (wordt nu gegarandeerd onzichtbaar gemaakt door de globale CSS in de hoofdband)
+    if st.button("Grade next sheet", key="hidden_save_btn", use_container_width=True):
         for key in (
             "omr_result", "grading_result", "_grading_key_id",
             "_omr_np_image", "_omr_region_grids", "_omr_output_dir",
@@ -328,7 +330,8 @@ def show_results_page(logo_html, local_img_path):
             st.session_state.pop(key, None)
         st.session_state.screen = "camera"
         st.rerun()
-    st.markdown('</div></div>', unsafe_allow_html=True)
+        
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def _show_summary_panel(omr_result: dict | None, grading: dict | None) -> None:

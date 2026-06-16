@@ -137,7 +137,7 @@ def show_camera_page(current_dir, encoded_logo_full):
 
                             model = _load_yolo_model(weights)
                             ocr_reader = _get_ocr_reader()
-                            args = argparse.Namespace(conf=0.25, imgsz=1024, device="0", fill_threshold=0.35, debug=False)
+                            args = argparse.Namespace(conf=0.25, imgsz=1024, device="cpu", fill_threshold=0.35, debug=False)
                             out_dir = _project_root / "runs" / "omr_results" / "blank_template"
                             out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -10,31 +10,6 @@ def init_db():
     cursor = conn.cursor()
     
     cursor.execute("PRAGMA foreign_keys = ON;")
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS scans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            score_earned INTEGER,
-            score_total INTEGER,
-            img_raw TEXT,
-            img_standardized TEXT,
-            img_sections TEXT,
-            img_graded TEXT
-        )
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS detected_answers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scan_id INTEGER,
-            question_number INTEGER,
-            ai_detected TEXT,
-            teacher_corrected TEXT,
-            is_correct INTEGER, -- 1 = true, 0 = false
-            FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE
-        )
-    """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS exam_files (
