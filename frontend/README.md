@@ -1,28 +1,18 @@
 # Frontend
 
-This folder will contain the user interface for the Azota exam grading system.
+Streamlit UI for the Azota exam grading system. Entry point is `app_streamlit.py` in the project root.
 
-## Purpose
+## Pages
 
-The frontend will allow users to:
+- **Camera page** — two tabs: upload a blank sheet to generate an answer key template, or upload a student submission to grade it
+- **Preview page** — shows the standardized image before running the full pipeline
+- **Results page** — detection image, graded bubble image, per-section scores (MCQ / T/F / Numeric), editable essay score, and total
+- **Edit result page** — teacher can correct the essay score and save to the database
 
-- Upload exam sheet photos
-- View the standardized exam image
-- See detected regions such as candidate ID, exam code, MCQ sections, true/false sections, numeric sections, and essay areas
-- Review extracted answers
-- Correct uncertain detections if needed
-- View grading results and warnings
+## Running
 
-## Planned Features
+```bash
+streamlit run app_streamlit.py
+```
 
-- Image upload page
-- Exam preview page
-- Detected bounding box overlay
-- Answer review interface
-- Grading result summary
-- Manual correction screen for ambiguous answers
-
-## Status
-
-This folder is currently a placeholder.  
-Frontend implementation will be added after the AI pipeline and backend API structure are more stable.
+Requires the `azota-yolo` conda environment (ultralytics + streamlit).

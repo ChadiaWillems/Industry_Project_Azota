@@ -1,12 +1,15 @@
+# Models
 
-# Models Folder
+Model weights (`.pt`, `.onnx`, `.engine`) are gitignored due to file size.
 
-This folder is used locally for trained model weights.
+## Current best model
 
-Model weights such as `.pt`, `.onnx`, and `.engine` files are ignored by Git because they can be large.
+```
+runs/detect/runs/azota_layout/yolov8l_layout_v2/weights/best.pt
+```
 
-Expected local structure:
+YOLOv8l trained on the v2 dataset (318 train / 20 valid / 7 test). mAP50=0.995, mAP50-95=0.858.
 
-models/
-  layout_detection/
-    best.pt
+## Baseline (committed for reference)
+
+`models/baselines/yolov8s_layout_v1/` — YOLOv8s on the v1 dataset. Confusion matrices and unseen-template predictions are kept to document the improvement from v1 to v2.
